@@ -115,8 +115,8 @@ struct WindowState {
 fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<WindowState>> {
     let window = gtk::ApplicationWindow::builder()
         .application(app)
-        .default_width(900)
-        .default_height(700)
+        .default_width(864)
+        .default_height(1000)
         .build();
     window.set_title(Some("DocxLite"));
 

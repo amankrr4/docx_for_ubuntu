@@ -31,3 +31,5 @@ One line per non-obvious decision. The build specification is background; this f
 - **Centred white page column.** The text view is wrapped in a responsive white page box capped at 816 px × zoom, centred over dark gutters. On narrow windows the page shrinks to the available width; a 200 ms resize poll adjusts the page width. Page padding is 64 px left/right and 48 px top/bottom, and paragraph margins are applied relative to that padding.
 
 - **Gutters match the titlebar.** The non-page chrome uses `#2c2c2c`, sampled from the system titlebar, so the dark gutters blend with the top border while the page stays white.
+
+- **Default window matches the page.** The window opens at 864×1000, giving the 816 px white page 24 px side gutters; the page still shrinks responsively on smaller screens.
