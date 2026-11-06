@@ -448,17 +448,28 @@ impl RenderState {
             Align::Start => gtk::Justification::Left,
         });
         let hanging = if list { 24 } else { 0 };
-        let left = twips_to_px_i32(props.indent_left_tw, self.zoom)
-            .saturating_add(extra)
-            .saturating_add(hanging);
-        tag.set_left_margin(left);
-        tag.set_right_margin(twips_to_px_i32(props.indent_right_tw, self.zoom));
+        let indent_left = twips_to_px_i32(props.indent_left_tw, self.zoom);
+        let left_extra = extra.saturating_add(hanging);
+        if indent_left != 0 || left_extra != 0 || list {
+            tag.set_left_margin(
+                self.view
+                    .left_margin()
+                    .saturating_add(indent_left)
+                    .saturating_add(left_extra),
+            );
+        }
+        let indent_right = twips_to_px_i32(props.indent_right_tw, self.zoom);
+        if indent_right != 0 {
+            tag.set_right_margin(self.view.right_margin().saturating_add(indent_right));
+        }
         let first = if list {
             -hanging
         } else {
             twips_to_px_i32(props.indent_first_tw, self.zoom)
         };
-        tag.set_indent(first);
+        if first != 0 {
+            tag.set_indent(first);
+        }
         tag.set_pixels_above_lines(twips_to_px_u32(props.space_before_tw, self.zoom));
         tag.set_pixels_below_lines(twips_to_px_u32(props.space_after_tw, self.zoom));
         if let Some(line) = props.line_height {
@@ -574,7 +585,9 @@ impl RenderState {
     fn content_width(&self) -> i32 {
         let width = self.view.width();
         if width > 100 {
-            width.saturating_sub(48)
+            width
+                .saturating_sub(self.view.left_margin())
+                .saturating_sub(self.view.right_margin())
         } else {
             700
         }
@@ -701,7 +714,8 @@ impl RenderState {
             tabs.set_tab(index, pango::TabAlign::Left, *position);
         }
         tag.set_tabs(Some(&tabs));
-        tag.set_left_margin(extra);
+        tag.set_left_margin(self.view.left_margin().saturating_add(extra));
+        tag.set_right_margin(self.view.right_margin());
         if muted {
             tag.set_foreground_rgba(Some(&self.theme.muted));
         }

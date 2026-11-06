@@ -15,9 +15,13 @@ use crate::render::{self, RenderOutput};
 use crate::theme::{self, AppTheme};
 
 pub fn run(files: Vec<String>) -> glib::ExitCode {
+    let mut flags = gio::ApplicationFlags::HANDLES_OPEN;
+    if std::env::var_os("DOCXLITE_NON_UNIQUE").is_some() {
+        flags |= gio::ApplicationFlags::NON_UNIQUE;
+    }
     let app = gtk::Application::builder()
         .application_id("io.github.docxlite.DocxLite")
-        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .flags(flags)
         .build();
     app.connect_startup(|_| {
         force_light_theme();
@@ -205,10 +209,10 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     text_view.set_editable(false);
     text_view.set_cursor_visible(false);
     text_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    text_view.set_left_margin(24);
-    text_view.set_right_margin(24);
-    text_view.set_top_margin(24);
-    text_view.set_bottom_margin(24);
+    text_view.set_left_margin(64);
+    text_view.set_right_margin(64);
+    text_view.set_top_margin(48);
+    text_view.set_bottom_margin(48);
     text_view.add_css_class("docx-text");
     scrolled.set_child(Some(&text_view));
     page_box.append(&scrolled);

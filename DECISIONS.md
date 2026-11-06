@@ -28,4 +28,4 @@ One line per non-obvious decision. The build specification is background; this f
 
 - **Local-only artifact baseline.** The checked-out local `.deb` was built on Ubuntu 24.04 (glibc 2.39/GTK 4.14) because no 22.04 container/sudo was available. The release workflow uses `ubuntu:22.04` for the older glibc/GTK baseline. The crate compiles with the `v4_6` feature, but the 22.04 runtime was not exercised locally.
 
-- **Centred white page column.** The text view is wrapped in a responsive white page box capped at 816 px × zoom, centred over grey gutters. On narrow windows the page shrinks to the available width; a 200 ms resize poll adjusts the page width.
+- **Centred white page column.** The text view is wrapped in a responsive white page box capped at 816 px × zoom, centred over grey gutters. On narrow windows the page shrinks to the available width; a 200 ms resize poll adjusts the page width. Page padding is 64 px left/right and 48 px top/bottom, and paragraph margins are applied relative to that padding.
