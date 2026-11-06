@@ -72,11 +72,13 @@ fn install_css() {
         ".docx-banner { padding: 6px 8px; background-color: alpha(@theme_selected_bg_color, 0.18); }\n\
          .docx-status { padding: 4px 10px; font-size: 0.9em; opacity: 0.75; }\n\
          .docx-empty-title { font-size: 1.2em; }\n\
-         .docx-body { background-color: #e8e8e8; }\n\
+         .docx-body { background-color: #2c2c2c; color: #f2f2f2; }\n\
          .docx-page { background-color: #ffffff; }\n\
          .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
-         window { background-color: #f6f6f6; color: #1a1a1a; }\n\
-         headerbar { background-color: #f6f6f6; color: #1a1a1a; }\n",
+         .docx-status { color: #d0d0d0; }\n\
+         .docx-banner { color: #f2f2f2; }\n\
+         window { background-color: #2c2c2c; color: #f2f2f2; }\n\
+         headerbar { background-color: #2c2c2c; color: #f2f2f2; }\n",
     );
     gtk::style_context_add_provider_for_display(
         &display,
