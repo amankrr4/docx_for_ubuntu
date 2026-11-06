@@ -25,3 +25,5 @@ One line per non-obvious decision. The build specification is background; this f
 - **AppStream homepage is intentionally unset until the public repo/name exists.** `appstreamcli validate` reports one `url-homepage-missing` warning; add the final project URL before publishing.
 
 - **Measured on this machine.** 833 KB stripped binary, 379 KB `.deb`, 880 KB installed; 1,000-page fixture parsed in 0.18 s with 260,000 nodes and ~70 MB headless RSS; GUI peak RSS under Xvfb was ~137 MB with `GSK_RENDERER=cairo` and ~213 MB with the default GL/llvmpipe path. The 80 MB GUI target is not met under Xvfb.
+
+- **Local-only artifact baseline.** The checked-out local `.deb` was built on Ubuntu 24.04 (glibc 2.39/GTK 4.14) because no 22.04 container/sudo was available. The release workflow uses `ubuntu:22.04` for the older glibc/GTK baseline. The crate compiles with the `v4_6` feature, but the 22.04 runtime was not exercised locally.

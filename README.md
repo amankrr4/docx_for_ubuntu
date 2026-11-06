@@ -28,6 +28,9 @@ A small, read-only `.docx` viewer for Ubuntu. It opens Word documents as readabl
 
 ## Install
 
+> **Local artifact note:** the `.deb` in `dist/` was built on Ubuntu 24.04 for local verification and therefore targets 24.04's glibc. The release workflow builds inside an `ubuntu:22.04` container so published artifacts are compatible with 22.04+ and newer. The GTK API baseline is still `v4_6`.
+
+
 ```bash
 sudo apt install ./docxlite_*.deb
 ```
