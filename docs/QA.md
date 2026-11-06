@@ -37,7 +37,7 @@ Run on Ubuntu 22.04, 24.04 and the newest LTS.
 ## Themes and display
 
 - [ ] Light theme is readable.
-- [ ] Dark theme is readable; explicit document colours are honoured.
+- [ ] Dark desktop theme: the app still uses a light/white-paper document view; explicit document colours are readable.
 - [ ] HiDPI 2× renders correctly.
 - [ ] Wayland and X11 both work.
 - [ ] Window stays responsive while a 1,000-page document renders.

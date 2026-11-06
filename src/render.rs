@@ -34,6 +34,7 @@ pub fn render(
     on_done: impl Fn() + 'static,
 ) -> Arc<AtomicBool> {
     let cancel = Arc::new(AtomicBool::new(false));
+    view.remove_css_class("docx-paper");
     let buffer = view.buffer();
     buffer.set_text("");
     let state = Rc::new(RefCell::new(RenderState {

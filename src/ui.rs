@@ -19,7 +19,10 @@ pub fn run(files: Vec<String>) -> glib::ExitCode {
         .application_id("io.github.docxlite.DocxLite")
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
-    app.connect_startup(|_| install_css());
+    app.connect_startup(|_| {
+        force_light_theme();
+        install_css();
+    });
     let has_files = !files.is_empty();
     app.connect_activate(move |app| {
         if !has_files && app.active_window().is_none() {
@@ -49,6 +52,13 @@ pub fn run(files: Vec<String>) -> glib::ExitCode {
     app.run_with_args(&refs)
 }
 
+fn force_light_theme() {
+    if let Some(settings) = gtk::Settings::default() {
+        settings.set_gtk_application_prefer_dark_theme(false);
+        settings.set_gtk_theme_name(Some("Adwaita"));
+    }
+}
+
 fn install_css() {
     let Some(display) = gdk::Display::default() else {
         return;
@@ -57,7 +67,10 @@ fn install_css() {
     provider.load_from_data(
         ".docx-banner { padding: 6px 8px; background-color: alpha(@theme_selected_bg_color, 0.18); }\n\
          .docx-status { padding: 4px 10px; font-size: 0.9em; opacity: 0.75; }\n\
-         .docx-empty-title { font-size: 1.2em; }\n",
+         .docx-empty-title { font-size: 1.2em; }\n\
+         .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
+         window { background-color: #f6f6f6; color: #1a1a1a; }\n\
+         headerbar { background-color: #f6f6f6; color: #1a1a1a; }\n",
     );
     gtk::style_context_add_provider_for_display(
         &display,

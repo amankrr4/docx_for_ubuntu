@@ -15,7 +15,7 @@ One line per non-obvious decision. The build specification is background; this f
 - **Paragraph tab stops are parsed and applied.** Right/center/decimal tab stops work through Pango `TabArray`; right-aligned resume dates work.
 - **Line spacing uses `GtkTextTag:line-height`.** Available since GTK 4.6 in the current binding. Exact/atLeast rules are approximated by the same factor.
 - **Soft line wrapping is full-width in stacked tables.** This is intentional: wrapping inside a narrow column would require a widget table. In tabular mode cells are short by construction.
-- **Dark mode uses GTK theme/prefer-dark settings plus `GTK_THEME`.** A portal/GNOME color-scheme read was planned but not wired; the app still follows the GTK theme. Explicit document colours are honoured.
+- **Light theme only.** The app forces the Adwaita light theme, a white paper document background and dark default text. This deliberately does not follow the desktop dark theme: Word documents commonly carry explicit black text, which was unreadable on a dark background.
 - **Images decode after bounded reads and pixel checks.** Decoding is currently on the UI thread; the image-count and pixel caps bound it. Moving decode to the worker is a future hardening step.
 - **CLI parser is hand-written.** No `clap`, `serde`, `anyhow` or async runtime. `--dump-text` never creates a GTK application, and the core tests run with `--no-default-features`.
 - **Lints.** `unsafe_code`, `unwrap_used`, `expect_used`, `panic` and `indexing_slicing` are denied in library code. `arithmetic_side_effects` is deliberately not enabled; saturating/checked math is used instead. Test code has explicit allowances.

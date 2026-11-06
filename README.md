@@ -16,7 +16,7 @@ A small, read-only `.docx` viewer for Ubuntu. It opens Word documents as readabl
 - Renders hyperlinks (click to open `http`, `https`, `mailto`; the real URL appears in the status bar on hover).
 - Renders text boxes, headers and footers.
 - Search (`Ctrl+F`), copy (`Ctrl+C`), zoom, drag-and-drop, open dialog, F5 reload, multiple windows.
-- Follows the GTK theme; explicit document colours are honoured.
+- Always uses a light, white-paper document view. Dark mode is intentionally not followed, so documents with explicit black text stay readable.
 
 ## What it deliberately does not do
 
