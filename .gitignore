@@ -1,0 +1,6 @@
+/target/
+/.sysroot/
+*.docx
+!tests/fixtures/**/*.docx
+/dist/
+/tests/fixtures/valid/long-1000-pages.docx

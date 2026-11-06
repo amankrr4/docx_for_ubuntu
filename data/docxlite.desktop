@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=DocxLite
+Comment=Lightweight viewer for Word documents
+Exec=docxlite %F
+Icon=io.github.docxlite.DocxLite
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.ms-word.document.macroEnabled.12;application/vnd.openxmlformats-officedocument.wordprocessingml.template;
+Keywords=docx;word;viewer;document;reader;
+StartupNotify=true

@@ -1,0 +1,58 @@
+[package]
+name = "docxlite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+description = "Lightweight read-only .docx viewer for Ubuntu"
+default-run = "docxlite"
+
+[features]
+default = ["gui"]
+gui = ["dep:gtk"]
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11.5", features = ["v4_6"], optional = true }
+zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2"] }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+roxmltree = "0.21.2"
+
+[dev-dependencies]
+insta = "1"
+proptest = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+
+[package.metadata.deb]
+maintainer = "DocxLite contributors <noreply@example.com>"
+copyright = "2026 DocxLite contributors"
+license-file = ["LICENSE", "1"]
+extended-description = "A small read-only viewer for .docx, .docm and .dotx files. It renders searchable, copyable text without launching an office suite."
+section = "text"
+priority = "optional"
+depends = "libc6 (>= 2.34), libgcc-s1, libgtk-4-1 (>= 4.6)"
+recommends = "fonts-crosextra-carlito, fonts-crosextra-caladea, fonts-liberation2, fonts-croscore"
+assets = [
+  ["target/release/docxlite", "usr/bin/", "755"],
+  ["data/docxlite.desktop", "usr/share/applications/", "644"],
+  ["data/io.github.docxlite.DocxLite.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+  ["data/io.github.docxlite.DocxLite.metainfo.xml", "usr/share/metainfo/", "644"],
+  ["README.md", "usr/share/doc/docxlite/README", "644"],
+  ["docs/screenshot.png", "usr/share/doc/docxlite/docs/screenshot.png", "644"],
+  ["CHANGELOG.md", "usr/share/doc/docxlite/CHANGELOG", "644"],
+  ["LICENSE", "usr/share/doc/docxlite/copyright", "644"],
+]

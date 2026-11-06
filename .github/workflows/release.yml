@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build on Ubuntu 22.04 in a container
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash -lc '
+            set -euo pipefail
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              build-essential pkg-config libgtk-4-dev curl ca-certificates git
+            curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+            cargo build --release
+            cargo install cargo-deb --locked
+            cargo deb --no-build
+            mkdir -p dist
+            cp target/debian/*.deb dist/
+            mkdir -p dist/tarball/docxlite-0.1.0-x86_64-linux
+            cp target/release/docxlite dist/tarball/docxlite-0.1.0-x86_64-linux/
+            cp data/docxlite.desktop dist/tarball/docxlite-0.1.0-x86_64-linux/
+            cp data/io.github.docxlite.DocxLite.svg dist/tarball/docxlite-0.1.0-x86_64-linux/
+            cp data/io.github.docxlite.DocxLite.metainfo.xml dist/tarball/docxlite-0.1.0-x86_64-linux/
+            cp packaging/install.sh dist/tarball/docxlite-0.1.0-x86_64-linux/
+            cp README.md LICENSE dist/tarball/docxlite-0.1.0-x86_64-linux/
+            tar -C dist/tarball -czf dist/docxlite-0.1.0-x86_64-linux.tar.gz docxlite-0.1.0-x86_64-linux
+            cd dist && sha256sum *.deb *.tar.gz > SHA256SUMS
+          '
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          body_path: CHANGELOG.md

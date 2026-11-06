@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install GTK and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev xvfb
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Core tests
+        run: cargo test --no-default-features
+      - name: Full tests
+        run: cargo test
+      - name: Release build
+        run: cargo build --release
+      - name: Size gate (6 MB)
+        run: test "$(stat -c%s target/release/docxlite)" -le 6291456
+      - name: GUI smoke test
+        run: |
+          DOCXLITE_SMOKE_EXIT=1 xvfb-run -a \
+            env GDK_BACKEND=x11 GSETTINGS_BACKEND=memory \
+            GTK_A11Y=none NO_AT_BRIDGE=1 G_DEBUG=fatal-criticals \
+            target/release/docxlite tests/fixtures/valid/basic.docx
+      - name: Audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit

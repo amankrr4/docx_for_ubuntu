@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.docxlite.DocxLite</id>
+  <name>DocxLite</name>
+  <summary>Lightweight viewer for Word documents</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>DocxLite opens .docx, .docm and .dotx files as readable, scrollable, searchable text. It is read-only, works offline, and does not fetch or execute anything from the document.</p>
+    <p>It renders headings, paragraphs, emphasis, colours, lists, simple and complex tables, images, hyperlinks, text boxes and headers/footers without launching a full office suite.</p>
+  </description>
+  <developer id="io.github.docxlite">
+    <name>DocxLite contributors</name>
+  </developer>
+  <launchable type="desktop-id">docxlite.desktop</launchable>
+  <provides>
+    <binary>docxlite</binary>
+  </provides>
+  <categories>
+    <category>Office</category>
+    <category>Viewer</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-07"/>
+  </releases>
+</component>

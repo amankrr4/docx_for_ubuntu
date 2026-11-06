@@ -1,0 +1,26 @@
+[package]
+name = "docxlite-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+docxlite = { path = "..", default-features = false }
+
+[[bin]]
+name = "fuzz_load_package"
+path = "fuzz_targets/fuzz_load_package.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parse_document"
+path = "fuzz_targets/fuzz_parse_document.rs"
+test = false
+doc = false
+bench = false
