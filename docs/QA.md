@@ -31,6 +31,7 @@ Run on Ubuntu 22.04, 24.04 and the newest LTS.
 - [ ] All matches highlight; current match is stronger; count says “1 of N”.
 - [ ] Enter/Shift+Enter moves next/previous and wraps.
 - [ ] Esc closes search.
+- [ ] Ctrl + mouse wheel zooms in/out over the page.
 - [ ] Zoom in/out/reset re-renders without losing text or links.
 - [ ] Search after zoom still works.
 

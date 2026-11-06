@@ -33,3 +33,5 @@ One line per non-obvious decision. The build specification is background; this f
 - **Gutters match the titlebar.** The non-page chrome uses `#2c2c2c`, sampled from the system titlebar, so the dark gutters blend with the top border while the page stays white.
 
 - **Default window matches the page.** The window opens at 864×1000, giving the 816 px white page 24 px side gutters; the page still shrinks responsively on smaller screens.
+
+- **Ctrl + mouse wheel zoom is app-side.** A capture-phase `EventControllerScroll` checks the Ctrl modifier, calls the same zoom path as the keyboard shortcuts, and restores the previous scroll offset after the chunked re-render. The OS only delivers the scroll event.

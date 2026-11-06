@@ -64,6 +64,7 @@ Shortcuts:
 | `Ctrl+F` | Search |
 | `Enter` / `Shift+Enter` | Next / previous match |
 | `Esc` | Close search |
+| `Ctrl + mouse wheel` | Zoom in/out over the page |
 | `Ctrl+=` / `Ctrl++` | Zoom in |
 | `Ctrl+-` | Zoom out |
 | `Ctrl+0` | Reset zoom |

@@ -106,6 +106,7 @@ struct WindowState {
     zoom: f64,
     generation: u64,
     cancel: Option<Arc<AtomicBool>>,
+    pending_scroll: Option<i32>,
     search_matches: Vec<(i32, i32)>,
     search_index: usize,
     render_output: Rc<RefCell<RenderOutput>>,
@@ -248,12 +249,34 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         zoom: 1.0,
         generation: 0,
         cancel: None,
+        pending_scroll: None,
         search_matches: Vec::new(),
         search_index: 0,
         render_output: Rc::new(RefCell::new(RenderOutput::default())),
         theme,
     }));
 
+    {
+        let scroll_state = state.clone();
+        let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+        scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
+        scroll.connect_scroll(move |controller, _dx, dy| {
+            if controller
+                .current_event_state()
+                .contains(gdk::ModifierType::CONTROL_MASK)
+            {
+                if dy < 0.0 {
+                    set_zoom(&scroll_state, 0.1);
+                } else if dy > 0.0 {
+                    set_zoom(&scroll_state, -0.1);
+                }
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        text_view.add_controller(scroll);
+    }
     {
         let resize_state = state.clone();
         glib::timeout_add_local(Duration::from_millis(200), move || {
@@ -547,6 +570,7 @@ fn start_load(state: &Rc<RefCell<WindowState>>, path: PathBuf) {
         state.document = None;
         state.search_matches.clear();
         state.search_index = 0;
+        state.pending_scroll = None;
         state.render_output.borrow_mut().link_targets.clear();
         state.render_output.borrow_mut().bookmarks.clear();
         state.empty_label.set_text("Loading…");
@@ -717,10 +741,11 @@ fn start_render(state: &Rc<RefCell<WindowState>>) {
         if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
             eprintln!("smoke on_done");
         }
-        if let Ok(state) = done_state.try_borrow_mut()
+        if let Ok(mut state) = done_state.try_borrow_mut()
             && state.generation == generation
         {
             state.status.set_text("");
+            restore_pending_scroll(&mut state);
         }
     });
     if let Ok(mut state) = state.try_borrow_mut() {
@@ -754,6 +779,17 @@ fn show_banner(state: &Rc<RefCell<WindowState>>, text: &str) {
         state.banner_label.set_text(text);
         state.banner.set_reveal_child(true);
     }
+}
+
+fn restore_pending_scroll(state: &mut WindowState) {
+    let Some(offset) = state.pending_scroll.take() else {
+        return;
+    };
+    let buffer = state.text_view.buffer();
+    let mut iter = buffer.iter_at_offset(offset);
+    state
+        .text_view
+        .scroll_to_iter(&mut iter, 0.1, true, 0.0, 0.35);
 }
 
 fn set_zoom(state: &Rc<RefCell<WindowState>>, delta: f64) {
