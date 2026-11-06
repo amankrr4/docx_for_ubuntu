@@ -369,9 +369,11 @@ impl RenderState {
         if run.all_caps {
             tag.set_text_transform(pango::TextTransform::Uppercase);
         }
-        if let Some(size) = run.size_half_pt {
-            tag.set_size_points(f64::from(size) / 2.0);
-        }
+        let base_points = run
+            .size_half_pt
+            .map(|size| f64::from(size) / 2.0)
+            .unwrap_or(11.0);
+        tag.set_size_points(base_points * self.zoom);
         if let Some(color) = run.color {
             tag.set_foreground_rgba(Some(&rgba(color)));
         }
