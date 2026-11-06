@@ -68,6 +68,8 @@ fn install_css() {
         ".docx-banner { padding: 6px 8px; background-color: alpha(@theme_selected_bg_color, 0.18); }\n\
          .docx-status { padding: 4px 10px; font-size: 0.9em; opacity: 0.75; }\n\
          .docx-empty-title { font-size: 1.2em; }\n\
+         .docx-body { background-color: #e8e8e8; }\n\
+         .docx-page { background-color: #ffffff; }\n\
          .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
          window { background-color: #f6f6f6; color: #1a1a1a; }\n\
          headerbar { background-color: #f6f6f6; color: #1a1a1a; }\n",
@@ -84,6 +86,7 @@ struct WindowState {
     stack: gtk::Stack,
     empty_label: gtk::Label,
     text_view: gtk::TextView,
+    page_box: gtk::Box,
     search_bar: gtk::SearchBar,
     search_entry: gtk::SearchEntry,
     search_button: gtk::ToggleButton,
@@ -144,6 +147,7 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     header.pack_end(&zoom_button);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.add_css_class("docx-body");
     window.set_child(Some(&body));
 
     let banner = gtk::Revealer::new();
@@ -187,6 +191,13 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     stack.add_named(&empty_box, Some("empty"));
 
     let text_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    text_box.set_vexpand(true);
+    let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    page_box.add_css_class("docx-page");
+    page_box.set_halign(gtk::Align::Center);
+    page_box.set_vexpand(true);
+    page_box.set_hexpand(false);
+    page_box.set_width_request(816);
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_vexpand(true);
     scrolled.set_hexpand(true);
@@ -200,7 +211,8 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     text_view.set_bottom_margin(24);
     text_view.add_css_class("docx-text");
     scrolled.set_child(Some(&text_view));
-    text_box.append(&scrolled);
+    page_box.append(&scrolled);
+    text_box.append(&page_box);
     stack.add_named(&text_box, Some("text"));
     stack.set_visible_child_name("empty");
 
@@ -216,6 +228,7 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         stack,
         empty_label,
         text_view: text_view.clone(),
+        page_box: page_box.clone(),
         search_bar: search_bar.clone(),
         search_entry: search_entry.clone(),
         search_button: search_button.clone(),
@@ -235,6 +248,18 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         theme,
     }));
 
+    {
+        let resize_state = state.clone();
+        glib::timeout_add_local(Duration::from_millis(200), move || {
+            if let Ok(state) = resize_state.try_borrow() {
+                if !state.window.is_visible() {
+                    return glib::ControlFlow::Break;
+                }
+                update_page_width(&state);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
     {
         let state = state.clone();
         banner_close.connect_clicked(move |_| {
@@ -879,6 +904,18 @@ fn allowed_scheme(url: &str) -> bool {
             "http" | "https" | "mailto"
         )
     })
+}
+
+fn update_page_width(state: &WindowState) {
+    let window_width = state.window.width();
+    if window_width <= 0 {
+        return;
+    }
+    let available = window_width.saturating_sub(48).max(200);
+    let desired = ((available as f64).min(816.0 * state.zoom)).round() as i32;
+    if state.page_box.width_request() != desired {
+        state.page_box.set_width_request(desired);
+    }
 }
 
 fn file_name(path: &std::path::Path) -> String {

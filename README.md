@@ -25,6 +25,7 @@ A small, read-only `.docx` viewer for Ubuntu. It opens Word documents as readabl
 - No macros, OLE activation, external templates or external image loading.
 - No `.doc`, `.odt` or `.rtf` support. Old/password-protected documents get a friendly message.
 - No pixel-faithful pagination, headers/footers per page, columns, comments pane, WordArt, charts or SmartArt. Unsupported content shows a placeholder or warning.
+- The document is shown in a centred white page column with grey gutters; this is a reading layout, not a page-layout clone.
 
 ## Install
 
