@@ -273,14 +273,11 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
 
     let status_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     status_bar.add_css_class("docx-statusbar");
-    let status_open = gtk::Button::with_label("Open");
-    status_open.set_tooltip_text(Some("Open a document (Ctrl+O)"));
     let status = gtk::Label::new(None);
     status.add_css_class("docx-status");
     status.set_xalign(0.0);
     status.set_hexpand(true);
     status.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    status_bar.append(&status_open);
     status_bar.append(&status);
     body.append(&status_bar);
 
@@ -353,10 +350,6 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
                 state.banner.set_reveal_child(false);
             }
         });
-    }
-    {
-        let state = state.clone();
-        status_open.connect_clicked(move |_| show_open_dialog(&state));
     }
     {
         let state = state.clone();
