@@ -112,6 +112,7 @@ struct WindowState {
     search_matches: Vec<(i32, i32)>,
     search_index: usize,
     render_output: Rc<RefCell<RenderOutput>>,
+    open_dialog: Option<gtk::FileChooserDialog>,
     theme: AppTheme,
 }
 
@@ -127,10 +128,6 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     let title = gtk::Label::new(Some("DocxLite"));
     title.add_css_class("title");
     header.set_title_widget(Some(&title));
-
-    let open_button = gtk::Button::from_icon_name("document-open-symbolic");
-    open_button.set_tooltip_text(Some("Open (Ctrl+O)"));
-    header.pack_start(&open_button);
 
     let search_button = gtk::ToggleButton::new();
     search_button.set_icon_name("edit-find-symbolic");
@@ -262,6 +259,7 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         search_matches: Vec::new(),
         search_index: 0,
         render_output: Rc::new(RefCell::new(RenderOutput::default())),
+        open_dialog: None,
         theme,
     }));
 
@@ -305,10 +303,6 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
                 state.banner.set_reveal_child(false);
             }
         });
-    }
-    {
-        let state = state.clone();
-        open_button.connect_clicked(move |_| show_open_dialog(&state));
     }
     {
         let state = state.clone();
@@ -540,34 +534,51 @@ fn install_drop_target(window: &gtk::ApplicationWindow, state: &Rc<RefCell<Windo
     window.add_controller(drop);
 }
 
+#[allow(deprecated)]
 fn show_open_dialog(state: &Rc<RefCell<WindowState>>) {
-    let Ok(state_ref) = state.try_borrow() else {
-        return;
+    let window = {
+        let Ok(state_ref) = state.try_borrow() else {
+            return;
+        };
+        if let Some(dialog) = &state_ref.open_dialog {
+            dialog.present();
+            return;
+        }
+        state_ref.window.clone()
     };
-    let window = state_ref.window.clone();
-    drop(state_ref);
-    #[allow(deprecated)]
-    let chooser = gtk::FileChooserNative::builder()
-        .title("Open Document")
-        .transient_for(&window)
-        .action(gtk::FileChooserAction::Open)
-        .build();
+    let dialog = gtk::FileChooserDialog::new(
+        Some("Open Document"),
+        Some(&window),
+        gtk::FileChooserAction::Open,
+        &[
+            ("Cancel", gtk::ResponseType::Cancel),
+            ("Open", gtk::ResponseType::Accept),
+        ],
+    );
+    dialog.set_modal(true);
+    dialog.set_default_response(gtk::ResponseType::Accept);
     let filter = gtk::FileFilter::new();
     filter.set_name(Some("Word documents"));
     filter.add_pattern("*.docx");
     filter.add_pattern("*.docm");
     filter.add_pattern("*.dotx");
-    chooser.add_filter(&filter);
-    let state = state.clone();
-    chooser.connect_response(move |chooser, response| {
+    dialog.add_filter(&filter);
+    let state_clone = state.clone();
+    dialog.connect_response(move |dialog, response| {
         if response == gtk::ResponseType::Accept
-            && let Some(path) = chooser.file().and_then(|file| file.path())
+            && let Some(path) = dialog.file().and_then(|file| file.path())
         {
-            start_load(&state, path);
+            start_load(&state_clone, path);
         }
-        chooser.destroy();
+        if let Ok(mut state) = state_clone.try_borrow_mut() {
+            state.open_dialog = None;
+        }
+        dialog.close();
     });
-    chooser.show();
+    if let Ok(mut state) = state.try_borrow_mut() {
+        state.open_dialog = Some(dialog.clone());
+    }
+    dialog.present();
 }
 
 fn start_load(state: &Rc<RefCell<WindowState>>, path: PathBuf) {
@@ -699,6 +710,9 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
         {
             set_zoom(&done_state, 0.25);
             return;
+        }
+        if std::env::var_os("DOCXLITE_SMOKE_OPEN").is_some() {
+            show_open_dialog(&done_state);
         }
         if let Ok(query) = std::env::var("DOCXLITE_SMOKE_SEARCH") {
             if let Ok(state) = done_state.try_borrow_mut() {
