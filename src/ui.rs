@@ -75,6 +75,8 @@ fn install_css() {
          .docx-body { background-color: #2c2c2c; color: #f2f2f2; }\n\
          .docx-page { background-color: #ffffff; }\n\
          .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
+         .docx-statusbar { background-color: #2c2c2c; padding: 4px 8px; }\n\
+         .docx-statusbar .docx-status { padding: 0; }\n\
          .docx-status { color: #d0d0d0; }\n\
          .docx-banner { color: #f2f2f2; }\n\
          window { background-color: #2c2c2c; color: #f2f2f2; }\n\
@@ -223,11 +225,18 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     stack.add_named(&text_box, Some("text"));
     stack.set_visible_child_name("empty");
 
+    let status_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    status_bar.add_css_class("docx-statusbar");
+    let status_open = gtk::Button::with_label("Open");
+    status_open.set_tooltip_text(Some("Open a document (Ctrl+O)"));
     let status = gtk::Label::new(None);
     status.add_css_class("docx-status");
     status.set_xalign(0.0);
+    status.set_hexpand(true);
     status.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    body.append(&status);
+    status_bar.append(&status_open);
+    status_bar.append(&status);
+    body.append(&status_bar);
 
     let theme = theme::detect(&window);
     let state = Rc::new(RefCell::new(WindowState {
@@ -300,6 +309,10 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     {
         let state = state.clone();
         open_button.connect_clicked(move |_| show_open_dialog(&state));
+    }
+    {
+        let state = state.clone();
+        status_open.connect_clicked(move |_| show_open_dialog(&state));
     }
     {
         let state = state.clone();
