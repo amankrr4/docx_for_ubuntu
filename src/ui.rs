@@ -76,6 +76,9 @@ fn install_css() {
          .docx-page { background-color: #ffffff; }\n\
          .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
          .docx-toolbar { background-color: #2c2c2c; padding: 4px 8px; }\n\
+         .docx-toolbar button, .docx-toolbar menubutton > button { background-color: #3a3a3a; background-image: none; color: #f2f2f2; border-color: #4a4a4a; box-shadow: none; }\n\
+         .docx-toolbar button:hover, .docx-toolbar menubutton > button:hover { background-color: #484848; }\n\
+         .docx-toolbar button:checked, .docx-toolbar menubutton > button:checked { background-color: #555555; }\n\
          .docx-scroll { background-color: #2c2c2c; }\n\
          .docx-sidebar-list { background-color: #242424; }\n\
          .docx-sidebar-list button { background: transparent; color: #f2f2f2; padding: 2px 4px; }\n\
