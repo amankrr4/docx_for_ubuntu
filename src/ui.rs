@@ -76,6 +76,7 @@ fn install_css() {
          .docx-page { background-color: #ffffff; }\n\
          .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
          .docx-toolbar { background-color: #2c2c2c; padding: 4px 8px; }\n\
+         .docx-scroll { background-color: #2c2c2c; }\n\
          .docx-sidebar-list { background-color: #242424; }\n\
          .docx-sidebar-list button { background: transparent; color: #f2f2f2; padding: 2px 4px; }\n\
          .docx-outline-item { color: #f2f2f2; }\n\
@@ -253,9 +254,15 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     page_box.set_vexpand(true);
     page_box.set_hexpand(false);
     page_box.set_width_request(816);
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_vexpand(true);
-    scrolled.set_hexpand(true);
+    let view_scroll = gtk::ScrolledWindow::new();
+    view_scroll.set_vexpand(true);
+    view_scroll.set_hexpand(true);
+    view_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    view_scroll.add_css_class("docx-scroll");
+    let page_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    page_area.set_halign(gtk::Align::Fill);
+    page_area.set_vexpand(true);
+    page_area.set_hexpand(true);
     let text_view = gtk::TextView::new();
     text_view.set_editable(false);
     text_view.set_cursor_visible(false);
@@ -264,10 +271,13 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     text_view.set_right_margin(64);
     text_view.set_top_margin(48);
     text_view.set_bottom_margin(48);
+    text_view.set_vexpand(true);
     text_view.add_css_class("docx-text");
-    scrolled.set_child(Some(&text_view));
-    page_box.append(&scrolled);
-    text_box.append(&page_box);
+    page_box.set_vexpand(true);
+    page_box.append(&text_view);
+    page_area.append(&page_box);
+    view_scroll.set_child(Some(&page_area));
+    text_box.append(&view_scroll);
     stack.add_named(&text_box, Some("text"));
     stack.set_visible_child_name("empty");
 
@@ -1119,8 +1129,15 @@ fn update_page_width(state: &WindowState) {
     }
     let available = content_width.saturating_sub(48).max(200);
     let desired = ((available as f64).min(816.0 * state.zoom)).round() as i32;
-    if state.page_box.width_request() != desired {
-        state.page_box.set_width_request(desired);
+    let desired_height = if state.stack.height() > 100 {
+        state.stack.height()
+    } else {
+        -1
+    };
+    if state.page_box.width_request() != desired
+        || (desired_height > 0 && state.page_box.height_request() != desired_height)
+    {
+        state.page_box.set_size_request(desired, desired_height);
     }
 }
 
