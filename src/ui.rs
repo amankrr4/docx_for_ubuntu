@@ -75,6 +75,14 @@ fn install_css() {
          .docx-body { background-color: #2c2c2c; color: #f2f2f2; }\n\
          .docx-page { background-color: #ffffff; }\n\
          .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
+         .docx-toolbar { background-color: #2c2c2c; padding: 4px 8px; }\n\
+         .docx-sidebar-list { background-color: #242424; }\n\
+         .docx-sidebar-list button { background: transparent; color: #f2f2f2; padding: 2px 4px; }\n\
+         .docx-outline-item { color: #f2f2f2; }\n\
+         .docx-outline-level-2 { padding-left: 12px; }\n\
+         .docx-outline-level-3 { padding-left: 24px; }\n\
+         .docx-outline-level-4 { padding-left: 36px; }\n\
+         .docx-outline-empty { color: #d0d0d0; padding: 8px; }\n\
          .docx-statusbar { background-color: #2c2c2c; padding: 4px 8px; }\n\
          .docx-statusbar .docx-status { padding: 0; }\n\
          .docx-status { color: #d0d0d0; }\n\
@@ -92,6 +100,8 @@ fn install_css() {
 struct WindowState {
     window: gtk::ApplicationWindow,
     stack: gtk::Stack,
+    sidebar: gtk::ScrolledWindow,
+    outline_box: gtk::Box,
     empty_label: gtk::Label,
     text_view: gtk::TextView,
     page_box: gtk::Box,
@@ -102,7 +112,6 @@ struct WindowState {
     banner_label: gtk::Label,
     status: gtk::Label,
     zoom_label: gtk::MenuButton,
-    title: gtk::Label,
     path: Option<PathBuf>,
     document: Option<Arc<Document>>,
     zoom: f64,
@@ -124,18 +133,23 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         .build();
     window.set_title(Some("DocxLite"));
 
-    let header = gtk::HeaderBar::new();
-    let title = gtk::Label::new(Some("DocxLite"));
-    title.add_css_class("title");
-    header.set_title_widget(Some(&title));
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.add_css_class("docx-body");
+    window.set_child(Some(&body));
 
+    let viewer_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    viewer_bar.add_css_class("docx-toolbar");
+    let sidebar_button = gtk::ToggleButton::new();
+    sidebar_button.set_icon_name("view-list-symbolic");
+    sidebar_button.set_tooltip_text(Some("Document outline"));
+    let viewer_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    viewer_spacer.set_hexpand(true);
     let search_button = gtk::ToggleButton::new();
     search_button.set_icon_name("edit-find-symbolic");
     search_button.set_tooltip_text(Some("Search (Ctrl+F)"));
-    header.pack_end(&search_button);
-
     let zoom_button = gtk::MenuButton::new();
     zoom_button.set_label("100%");
+    zoom_button.set_tooltip_text(Some("Zoom"));
     let zoom_popover = gtk::Popover::new();
     let zoom_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
     zoom_box.set_margin_top(6);
@@ -150,11 +164,32 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     zoom_box.append(&zoom_reset);
     zoom_popover.set_child(Some(&zoom_box));
     zoom_button.set_popover(Some(&zoom_popover));
-    header.pack_end(&zoom_button);
-
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    body.add_css_class("docx-body");
-    window.set_child(Some(&body));
+    let menu_button = gtk::MenuButton::new();
+    menu_button.set_icon_name("open-menu-symbolic");
+    menu_button.set_tooltip_text(Some("Menu"));
+    let menu_popover = gtk::Popover::new();
+    let menu_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    menu_box.set_margin_top(6);
+    menu_box.set_margin_bottom(6);
+    menu_box.set_margin_start(6);
+    menu_box.set_margin_end(6);
+    let menu_open = gtk::Button::with_label("Open…");
+    let menu_reload = gtk::Button::with_label("Reload");
+    let menu_fullscreen = gtk::Button::with_label("Fullscreen");
+    menu_box.append(&menu_open);
+    menu_box.append(&menu_reload);
+    menu_box.append(&menu_fullscreen);
+    menu_popover.set_child(Some(&menu_box));
+    menu_button.set_popover(Some(&menu_popover));
+    let fullscreen_button = gtk::Button::from_icon_name("view-fullscreen-symbolic");
+    fullscreen_button.set_tooltip_text(Some("Fullscreen"));
+    viewer_bar.append(&sidebar_button);
+    viewer_bar.append(&viewer_spacer);
+    viewer_bar.append(&zoom_button);
+    viewer_bar.append(&search_button);
+    viewer_bar.append(&menu_button);
+    viewer_bar.append(&fullscreen_button);
+    body.append(&viewer_bar);
 
     let banner = gtk::Revealer::new();
     banner.set_transition_type(gtk::RevealerTransitionType::SlideDown);
@@ -182,7 +217,21 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
 
     let stack = gtk::Stack::new();
     stack.set_vexpand(true);
-    body.append(&stack);
+    stack.set_hexpand(true);
+
+    let sidebar = gtk::ScrolledWindow::new();
+    sidebar.set_size_request(220, -1);
+    sidebar.set_vexpand(true);
+    sidebar.set_visible(false);
+    let outline_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    outline_box.add_css_class("docx-sidebar-list");
+    sidebar.set_child(Some(&outline_box));
+
+    let content_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    content_box.set_vexpand(true);
+    content_box.append(&sidebar);
+    content_box.append(&stack);
+    body.append(&content_box);
 
     let empty_box = gtk::Box::new(gtk::Orientation::Vertical, 12);
     empty_box.set_valign(gtk::Align::Center);
@@ -239,6 +288,8 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     let state = Rc::new(RefCell::new(WindowState {
         window: window.clone(),
         stack,
+        sidebar: sidebar.clone(),
+        outline_box: outline_box.clone(),
         empty_label,
         text_view: text_view.clone(),
         page_box: page_box.clone(),
@@ -249,7 +300,6 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         banner_label,
         status,
         zoom_label: zoom_button.clone(),
-        title,
         path: None,
         document: None,
         zoom: 1.0,
@@ -358,6 +408,28 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     {
         let state = state.clone();
         zoom_reset.connect_clicked(move |_| set_zoom(&state, 0.0));
+    }
+    {
+        let sidebar = sidebar.clone();
+        sidebar_button.connect_toggled(move |button| {
+            sidebar.set_visible(button.is_active());
+        });
+    }
+    {
+        let state = state.clone();
+        menu_open.connect_clicked(move |_| show_open_dialog(&state));
+    }
+    {
+        let state = state.clone();
+        menu_reload.connect_clicked(move |_| reload(&state));
+    }
+    {
+        let state = state.clone();
+        menu_fullscreen.connect_clicked(move |_| toggle_fullscreen(&state));
+    }
+    {
+        let state = state.clone();
+        fullscreen_button.connect_clicked(move |_| toggle_fullscreen(&state));
     }
 
     install_actions(app, &window, &state);
@@ -595,6 +667,8 @@ fn start_load(state: &Rc<RefCell<WindowState>>, path: PathBuf) {
         state.search_matches.clear();
         state.search_index = 0;
         state.pending_scroll = None;
+        state.sidebar.set_visible(false);
+        clear_outline_list(&state.outline_box);
         state.render_output.borrow_mut().link_targets.clear();
         state.render_output.borrow_mut().bookmarks.clear();
         state.empty_label.set_text("Loading…");
@@ -602,7 +676,6 @@ fn start_load(state: &Rc<RefCell<WindowState>>, path: PathBuf) {
         state.banner.set_reveal_child(false);
         state.status.set_text("");
         let name = file_name(&path);
-        state.title.set_text(&name);
         state.window.set_title(Some(&format!("{name} — DocxLite")));
         state.generation
     };
@@ -674,11 +747,6 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
         } else {
             format!("{name} — DocxLite")
         };
-        state.title.set_text(&if truncated {
-            format!("{name} (partial)")
-        } else {
-            name.clone()
-        });
         state.window.set_title(Some(&title));
         (
             state.text_view.clone(),
@@ -704,6 +772,12 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
             && state.generation == generation
         {
             state.status.set_text("");
+        }
+        populate_outline(&done_state);
+        if std::env::var_os("DOCXLITE_SMOKE_OUTLINE").is_some()
+            && let Ok(state) = done_state.try_borrow()
+        {
+            state.sidebar.set_visible(true);
         }
         static ZOOMED: AtomicBool = AtomicBool::new(false);
         if std::env::var_os("DOCXLITE_SMOKE_ZOOM").is_some() && !ZOOMED.swap(true, Ordering::SeqCst)
@@ -774,6 +848,12 @@ fn start_render(state: &Rc<RefCell<WindowState>>) {
             state.status.set_text("");
             restore_pending_scroll(&mut state);
         }
+        populate_outline(&done_state);
+        if std::env::var_os("DOCXLITE_SMOKE_OUTLINE").is_some()
+            && let Ok(state) = done_state.try_borrow()
+        {
+            state.sidebar.set_visible(true);
+        }
     });
     if let Ok(mut state) = state.try_borrow_mut() {
         state.cancel = Some(cancel);
@@ -784,6 +864,7 @@ fn output_reset(output: &Rc<RefCell<RenderOutput>>) {
     if let Ok(mut output) = output.try_borrow_mut() {
         output.link_targets.clear();
         output.bookmarks.clear();
+        output.outline.clear();
     }
 }
 
@@ -805,6 +886,64 @@ fn show_banner(state: &Rc<RefCell<WindowState>>, text: &str) {
     if let Ok(state) = state.try_borrow() {
         state.banner_label.set_text(text);
         state.banner.set_reveal_child(true);
+    }
+}
+
+fn toggle_fullscreen(state: &Rc<RefCell<WindowState>>) {
+    if let Ok(state) = state.try_borrow() {
+        if state.window.is_fullscreen() {
+            state.window.unfullscreen();
+        } else {
+            state.window.fullscreen();
+        }
+    }
+}
+
+fn clear_outline_list(list: &gtk::Box) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+}
+
+fn populate_outline(state: &Rc<RefCell<WindowState>>) {
+    let entries = {
+        let Ok(state) = state.try_borrow() else {
+            return;
+        };
+        let output = state.render_output.borrow();
+        output
+            .outline
+            .iter()
+            .map(|entry| (entry.title.clone(), entry.level, entry.mark.clone()))
+            .collect::<Vec<_>>()
+    };
+    let Ok(state) = state.try_borrow() else {
+        return;
+    };
+    clear_outline_list(&state.outline_box);
+    if entries.is_empty() {
+        let label = gtk::Label::new(Some("No headings"));
+        label.add_css_class("docx-outline-empty");
+        label.set_xalign(0.0);
+        state.outline_box.append(&label);
+        return;
+    }
+    for (title, level, mark) in entries {
+        let label = gtk::Label::new(Some(&title));
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.set_max_width_chars(28);
+        let button = gtk::Button::new();
+        button.set_child(Some(&label));
+        button.set_halign(gtk::Align::Start);
+        button.set_hexpand(true);
+        button.add_css_class("docx-outline-item");
+        button.add_css_class(&format!("docx-outline-level-{level}"));
+        let view = state.text_view.clone();
+        button.connect_clicked(move |_| {
+            view.scroll_to_mark(&mark, 0.1, true, 0.0, 0.0);
+        });
+        state.outline_box.append(&button);
     }
 }
 
@@ -977,10 +1116,15 @@ fn allowed_scheme(url: &str) -> bool {
 
 fn update_page_width(state: &WindowState) {
     let window_width = state.window.width();
-    if window_width <= 0 {
+    let content_width = if state.stack.width() > 100 {
+        state.stack.width()
+    } else {
+        window_width
+    };
+    if content_width <= 0 {
         return;
     }
-    let available = window_width.saturating_sub(48).max(200);
+    let available = content_width.saturating_sub(48).max(200);
     let desired = ((available as f64).min(816.0 * state.zoom)).round() as i32;
     if state.page_box.width_request() != desired {
         state.page_box.set_width_request(desired);

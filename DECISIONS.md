@@ -37,3 +37,5 @@ One line per non-obvious decision. The build specification is background; this f
 - **Ctrl + mouse wheel zoom is app-side.** A capture-phase `EventControllerScroll` checks the Ctrl modifier, calls the same zoom path as the keyboard shortcuts, and restores the previous scroll offset after the chunked re-render. The OS only delivers the scroll event.
 
 - **Cairo renderer by default.** On the author’s X11/Mesa setup the default GTK GL renderer produced a transparent, unpainted client window. The GUI entry re-execs itself with `GSK_RENDERER=cairo` unless the user already set `GSK_RENDERER`; set `GSK_RENDERER=gl` to opt back into GL.
+
+- **Visible viewer chrome and heading outline.** The in-content toolbar carries outline, zoom, search, menu and fullscreen controls because server-side X11 decorations hide the custom titlebar. The sidebar is built from heading paragraphs and scrolls via `TextMark`s. Page thumbnails and per-page counts are intentionally not faked; they would require pagination.

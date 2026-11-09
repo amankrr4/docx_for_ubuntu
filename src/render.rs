@@ -23,6 +23,13 @@ use crate::xmlutil::{twips_to_px_i32, twips_to_px_u32};
 pub struct RenderOutput {
     pub link_targets: Vec<LinkTarget>,
     pub bookmarks: HashMap<String, gtk::TextMark>,
+    pub outline: Vec<OutlineEntry>,
+}
+
+pub struct OutlineEntry {
+    pub title: String,
+    pub level: u8,
+    pub mark: gtk::TextMark,
 }
 
 pub fn render(
@@ -51,6 +58,7 @@ pub fn render(
         output,
         image_cache: HashMap::new(),
         rendered_images: 0,
+        collect_outline: false,
         phase: Phase::Headers,
         header_index: 0,
         block_index: 0,
@@ -155,6 +163,7 @@ struct RenderState {
     output: Rc<RefCell<RenderOutput>>,
     image_cache: HashMap<usize, gdk::Texture>,
     rendered_images: u32,
+    collect_outline: bool,
     phase: Phase,
     header_index: usize,
     block_index: usize,
@@ -170,6 +179,7 @@ impl RenderState {
         }
         match self.phase {
             Phase::Headers => {
+                self.collect_outline = false;
                 if let Some(header) = self.document.headers.get(self.header_index).cloned() {
                     self.render_header_footer(&header, true);
                     self.header_index = self.header_index.saturating_add(1);
@@ -179,6 +189,7 @@ impl RenderState {
                 }
             }
             Phase::Body => {
+                self.collect_outline = true;
                 if let Some(block) = self.document.blocks.get(self.block_index).cloned() {
                     self.render_block(&block, 0, false);
                     self.block_index = self.block_index.saturating_add(1);
@@ -188,6 +199,7 @@ impl RenderState {
                 }
             }
             Phase::Footers => {
+                self.collect_outline = false;
                 if let Some(footer) = self.document.footers.get(self.footer_index).cloned() {
                     self.render_header_footer(&footer, false);
                     self.footer_index = self.footer_index.saturating_add(1);
@@ -247,6 +259,22 @@ impl RenderState {
 
     fn render_paragraph(&mut self, paragraph: &Paragraph, extra: i32, muted: bool) {
         let start_mark = self.buffer.create_mark(None, &self.buffer.end_iter(), true);
+        let outline_mark = if self.collect_outline {
+            paragraph.props.heading_level.and_then(|level| {
+                let title = inline_text(&paragraph.inlines).trim().to_string();
+                if title.is_empty() {
+                    None
+                } else {
+                    Some((
+                        title,
+                        level,
+                        self.buffer.create_mark(None, &self.buffer.end_iter(), true),
+                    ))
+                }
+            })
+        } else {
+            None
+        };
         let mut base_run = paragraph_run(&paragraph.props);
         if muted {
             base_run.color = None;
@@ -266,6 +294,12 @@ impl RenderState {
         let end = self.buffer.end_iter();
         let tag = self.para_tag(&paragraph.props, extra, muted, paragraph.list.is_some());
         self.buffer.apply_tag(&tag, &start, &end);
+        if let Some((title, level, mark)) = outline_mark {
+            self.output
+                .borrow_mut()
+                .outline
+                .push(OutlineEntry { title, level, mark });
+        }
     }
 
     fn render_inline(

@@ -25,6 +25,12 @@ Run on Ubuntu 22.04, 24.04 and the newest LTS.
 - [ ] Deleted revisions are hidden; inserted/moved-in text is shown.
 - [ ] Text boxes render without duplicating `mc:Fallback` text.
 
+## Chrome and outline
+
+- [ ] Toolbar shows outline, zoom, search, menu and fullscreen controls.
+- [ ] Outline sidebar lists headings and scrolls to the selected heading.
+- [ ] Sidebar toggle shrinks the page and keeps it readable.
+
 ## Search and zoom
 
 - [ ] Search is case-insensitive.
