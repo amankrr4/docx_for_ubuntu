@@ -37,6 +37,18 @@ fn run() -> i32 {
 
 #[cfg(feature = "gui")]
 fn run_gui(files: Vec<PathBuf>) -> i32 {
+    #[cfg(unix)]
+    if std::env::var_os("GSK_RENDERER").is_none()
+        && let Ok(executable) = std::env::current_exe()
+    {
+        use std::os::unix::process::CommandExt;
+        let error = std::process::Command::new(executable)
+            .env("GSK_RENDERER", "cairo")
+            .args(&files)
+            .exec();
+        eprintln!("docxlite: could not switch to the Cairo renderer: {error}");
+    }
+
     let files: Vec<String> = files
         .iter()
         .map(|path| path.to_string_lossy().to_string())

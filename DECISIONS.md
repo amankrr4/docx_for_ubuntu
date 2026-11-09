@@ -35,3 +35,5 @@ One line per non-obvious decision. The build specification is background; this f
 - **Default window matches the page.** The window opens at 864×1000, giving the 816 px white page 24 px side gutters; the page still shrinks responsively on smaller screens.
 
 - **Ctrl + mouse wheel zoom is app-side.** A capture-phase `EventControllerScroll` checks the Ctrl modifier, calls the same zoom path as the keyboard shortcuts, and restores the previous scroll offset after the chunked re-render. The OS only delivers the scroll event.
+
+- **Cairo renderer by default.** On the author’s X11/Mesa setup the default GTK GL renderer produced a transparent, unpainted client window. The GUI entry re-execs itself with `GSK_RENDERER=cairo` unless the user already set `GSK_RENDERER`; set `GSK_RENDERER=gl` to opt back into GL.
