@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -327,20 +327,25 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         let scroll_state = state.clone();
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
         scroll.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let wheel_state = scroll_state.clone();
+        let pending_zoom: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+        let zoom_scheduled: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         scroll.connect_scroll(move |controller, _dx, dy| {
-            if controller
+            if !controller
                 .current_event_state()
                 .contains(gdk::ModifierType::CONTROL_MASK)
             {
-                if dy < 0.0 {
-                    set_zoom(&scroll_state, 0.1);
-                } else if dy > 0.0 {
-                    set_zoom(&scroll_state, -0.1);
-                }
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
+                return glib::Propagation::Proceed;
             }
+            if dy != 0.0 {
+                queue_wheel_zoom(
+                    &wheel_state,
+                    &pending_zoom,
+                    &zoom_scheduled,
+                    if dy < 0.0 { 0.1 } else { -0.1 },
+                );
+            }
+            glib::Propagation::Stop
         });
         text_view.add_controller(scroll);
     }
@@ -726,12 +731,15 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
     let warnings = document.warning_count();
     let truncated = document.truncated;
     let document = Arc::new(document);
-    let (view, zoom, theme, output) = {
+    let (view, zoom, theme) = {
         let Ok(mut state) = state.try_borrow_mut() else {
             return;
         };
         if state.generation != generation {
             return;
+        }
+        if let Some(cancel) = state.cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
         }
         state.document = Some(document.clone());
         state.stack.set_visible_child_name("text");
@@ -739,10 +747,6 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
         state.banner.set_reveal_child(false);
         state.search_matches.clear();
         state.search_index = 0;
-        output_reset(&state.render_output);
-        state
-            .text_view
-            .set_buffer(Some(&gtk::TextBuffer::new(None)));
         let name = state
             .path
             .as_deref()
@@ -754,12 +758,7 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
             format!("{name} — DocxLite")
         };
         state.window.set_title(Some(&title));
-        (
-            state.text_view.clone(),
-            state.zoom,
-            state.theme.clone(),
-            state.render_output.clone(),
-        )
+        (state.text_view.clone(), state.zoom, state.theme.clone())
     };
     if warnings > 0 {
         show_banner(
@@ -770,16 +769,24 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
         );
     }
     let done_state = state.clone();
-    let cancel = render::render(view, document, zoom, theme, output, move || {
+    let cancel = render::render(view, document, zoom, theme, move |fresh| {
         if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
             eprintln!("smoke on_done");
         }
         if let Ok(state) = done_state.try_borrow_mut()
             && state.generation == generation
         {
+            publish_output(&state.render_output, fresh);
             state.status.set_text("");
         }
         populate_outline(&done_state);
+        {
+            static SPAM_STARTED: AtomicBool = AtomicBool::new(false);
+            if !SPAM_STARTED.swap(true, Ordering::SeqCst) {
+                start_wheel_stress(&done_state);
+                start_zoom_spam(&done_state);
+            }
+        }
         if std::env::var_os("DOCXLITE_SMOKE_OUTLINE").is_some()
             && let Ok(state) = done_state.try_borrow()
         {
@@ -832,7 +839,7 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
 }
 
 fn start_render(state: &Rc<RefCell<WindowState>>) {
-    let (document, view, zoom, theme, output, generation) = {
+    let (document, view, zoom, theme, generation) = {
         let Ok(mut state) = state.try_borrow_mut() else {
             return;
         };
@@ -844,64 +851,168 @@ fn start_render(state: &Rc<RefCell<WindowState>>) {
         }
         state.search_matches.clear();
         state.search_index = 0;
-        output_reset(&state.render_output);
-        state
-            .text_view
-            .set_buffer(Some(&gtk::TextBuffer::new(None)));
+        if let Some(iter) = state.text_view.iter_at_location(0, 0) {
+            state.pending_scroll = Some(iter.offset());
+        }
         state.status.set_text("Rendering…");
         (
             document,
             state.text_view.clone(),
             state.zoom,
             state.theme.clone(),
-            state.render_output.clone(),
             state.generation,
         )
     };
     let done_state = state.clone();
-    let cancel = render::render(view, document, zoom, theme, output, move || {
+    let cancel = render::render(view, document, zoom, theme, move |fresh| {
         if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
             eprintln!("smoke on_done");
         }
         if let Ok(mut state) = done_state.try_borrow_mut()
             && state.generation == generation
         {
+            publish_output(&state.render_output, fresh);
             state.status.set_text("");
             restore_pending_scroll(&mut state);
         }
         populate_outline(&done_state);
+        {
+            static SPAM_STARTED: AtomicBool = AtomicBool::new(false);
+            if !SPAM_STARTED.swap(true, Ordering::SeqCst) {
+                start_wheel_stress(&done_state);
+                start_zoom_spam(&done_state);
+            }
+        }
         if std::env::var_os("DOCXLITE_SMOKE_OUTLINE").is_some()
             && let Ok(state) = done_state.try_borrow()
         {
             state.sidebar.set_visible(true);
         }
-        if let Ok(steps) = std::env::var("DOCXLITE_SMOKE_ZOOM_STEPS") {
-            let limit = steps.parse::<usize>().unwrap_or(0);
-            let step = ZOOM_STEPS.fetch_add(1, Ordering::SeqCst);
-            if step < limit {
-                let delta = if step.is_multiple_of(2) { 0.2 } else { -0.2 };
-                if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
-                    eprintln!("zoom step {step}");
-                }
-                set_zoom(&done_state, delta);
-                return;
-            }
-            if std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
-                std::process::exit(0);
-            }
-        }
+        run_zoom_stress(&done_state);
     });
     if let Ok(mut state) = state.try_borrow_mut() {
         state.cancel = Some(cancel);
     }
 }
 
-fn output_reset(output: &Rc<RefCell<RenderOutput>>) {
-    if let Ok(mut output) = output.try_borrow_mut() {
-        output.pictures.clear();
-        output.link_targets.clear();
-        output.bookmarks.clear();
-        output.outline.clear();
+static ZOOM_STEPS: AtomicUsize = AtomicUsize::new(0);
+
+fn run_zoom_stress(state: &Rc<RefCell<WindowState>>) {
+    let Ok(steps) = std::env::var("DOCXLITE_SMOKE_ZOOM_STEPS") else {
+        return;
+    };
+    let limit = steps.parse::<usize>().unwrap_or(0);
+    let step = ZOOM_STEPS.fetch_add(1, Ordering::SeqCst);
+    if step >= limit {
+        if std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
+            std::process::exit(0);
+        }
+        return;
+    }
+    let pattern = std::env::var("DOCXLITE_SMOKE_ZOOM_PATTERN").unwrap_or_default();
+    let delta = match pattern.as_str() {
+        "up" => 0.25,
+        "down" => -0.25,
+        "jitter" => match step % 3 {
+            0 => 0.5,
+            1 => -0.5,
+            _ => 0.25,
+        },
+        _ => {
+            if step.is_multiple_of(2) {
+                0.2
+            } else {
+                -0.2
+            }
+        }
+    };
+    if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
+        eprintln!("zoom step {step} delta {delta}");
+    }
+    set_zoom(state, delta);
+}
+
+fn queue_wheel_zoom(
+    state: &Rc<RefCell<WindowState>>,
+    pending_zoom: &Rc<Cell<f64>>,
+    zoom_scheduled: &Rc<Cell<bool>>,
+    step: f64,
+) {
+    pending_zoom.set(pending_zoom.get() + step);
+    if zoom_scheduled.replace(true) {
+        return;
+    }
+    let state = state.clone();
+    let pending = pending_zoom.clone();
+    let scheduled = zoom_scheduled.clone();
+    glib::timeout_add_local_once(Duration::from_millis(40), move || {
+        scheduled.set(false);
+        let delta = pending.replace(0.0);
+        if delta != 0.0 {
+            set_zoom(&state, delta);
+        }
+    });
+}
+
+fn start_wheel_stress(state: &Rc<RefCell<WindowState>>) {
+    let Ok(count) = std::env::var("DOCXLITE_SMOKE_WHEEL_ZOOM") else {
+        return;
+    };
+    let count = count.parse::<usize>().unwrap_or(0);
+    if count == 0 {
+        return;
+    }
+    let pending: Rc<Cell<f64>> = Rc::new(Cell::new(0.0));
+    let scheduled: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let wheel_state = state.clone();
+    let mut fired = 0usize;
+    glib::timeout_add_local(Duration::from_millis(4), move || {
+        if fired >= count {
+            if std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
+                std::process::exit(0);
+            }
+            return glib::ControlFlow::Break;
+        }
+        let step = if fired.is_multiple_of(2) { 0.1 } else { -0.1 };
+        fired = fired.saturating_add(1);
+        queue_wheel_zoom(&wheel_state, &pending, &scheduled, step);
+        glib::ControlFlow::Continue
+    });
+}
+
+fn start_zoom_spam(state: &Rc<RefCell<WindowState>>) {
+    let Ok(count) = std::env::var("DOCXLITE_SMOKE_ZOOM_SPAM") else {
+        return;
+    };
+    let count = count.parse::<usize>().unwrap_or(0);
+    if count == 0 {
+        return;
+    }
+    let spam_state = state.clone();
+    let mut fired = 0usize;
+    glib::timeout_add_local(Duration::from_millis(15), move || {
+        if fired >= count {
+            if std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
+                std::process::exit(0);
+            }
+            return glib::ControlFlow::Break;
+        }
+        let delta = if fired.is_multiple_of(2) { 0.25 } else { -0.25 };
+        fired = fired.saturating_add(1);
+        if fired.is_multiple_of(7) && std::env::var_os("DOCXLITE_SMOKE_SPAM_RELOAD").is_some() {
+            reload(&spam_state);
+        }
+        if fired.is_multiple_of(5) && std::env::var_os("DOCXLITE_SMOKE_SPAM_SEARCH").is_some() {
+            perform_search(&spam_state);
+        }
+        set_zoom(&spam_state, delta);
+        glib::ControlFlow::Continue
+    });
+}
+
+fn publish_output(target: &Rc<RefCell<RenderOutput>>, fresh: RenderOutput) {
+    if let Ok(mut target) = target.try_borrow_mut() {
+        *target = fresh;
     }
 }
 
@@ -925,8 +1036,6 @@ fn show_banner(state: &Rc<RefCell<WindowState>>, text: &str) {
         state.banner.set_reveal_child(true);
     }
 }
-
-static ZOOM_STEPS: AtomicUsize = AtomicUsize::new(0);
 
 fn toggle_fullscreen(state: &Rc<RefCell<WindowState>>) {
     if let Ok(state) = state.try_borrow() {
@@ -953,7 +1062,7 @@ fn populate_outline(state: &Rc<RefCell<WindowState>>) {
         output
             .outline
             .iter()
-            .map(|entry| (entry.title.clone(), entry.level, entry.mark.clone()))
+            .map(|entry| (entry.title.clone(), entry.level, entry.offset))
             .collect::<Vec<_>>()
     };
     let Ok(state) = state.try_borrow() else {
@@ -967,7 +1076,7 @@ fn populate_outline(state: &Rc<RefCell<WindowState>>) {
         state.outline_box.append(&label);
         return;
     }
-    for (title, level, mark) in entries {
+    for (title, level, offset) in entries {
         let label = gtk::Label::new(Some(&title));
         label.set_xalign(0.0);
         label.set_wrap(true);
@@ -980,7 +1089,10 @@ fn populate_outline(state: &Rc<RefCell<WindowState>>) {
         button.add_css_class(&format!("docx-outline-level-{level}"));
         let view = state.text_view.clone();
         button.connect_clicked(move |_| {
-            view.scroll_to_mark(&mark, 0.1, true, 0.0, 0.0);
+            let buffer = view.buffer();
+            let max = buffer.char_count().max(0);
+            let iter = buffer.iter_at_offset(offset.clamp(0, max));
+            view.scroll_to_iter(&mut iter.clone(), 0.1, true, 0.0, 0.0);
         });
         state.outline_box.append(&button);
     }

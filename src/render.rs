@@ -30,7 +30,7 @@ pub struct RenderOutput {
 pub struct OutlineEntry {
     pub title: String,
     pub level: u8,
-    pub mark: gtk::TextMark,
+    pub offset: i32,
 }
 
 pub fn render(
@@ -38,16 +38,15 @@ pub fn render(
     document: Arc<Document>,
     zoom: f64,
     theme: AppTheme,
-    output: Rc<RefCell<RenderOutput>>,
-    on_done: impl Fn() + 'static,
+    on_done: impl Fn(RenderOutput) + 'static,
 ) -> Arc<AtomicBool> {
     let cancel = Arc::new(AtomicBool::new(false));
     view.remove_css_class("docx-paper");
-    let buffer = view.buffer();
-    buffer.set_text("");
+    let buffer = gtk::TextBuffer::new(None);
     let state = Rc::new(RefCell::new(RenderState {
         buffer,
         view,
+        attached: false,
         document,
         zoom,
         theme,
@@ -56,7 +55,7 @@ pub fn render(
         link_tags: HashMap::new(),
         shade_tags: HashMap::new(),
         next_tag: 0,
-        output,
+        output: RenderOutput::default(),
         image_cache: HashMap::new(),
         rendered_images: 0,
         collect_outline: false,
@@ -74,7 +73,14 @@ pub fn render(
             return glib::ControlFlow::Break;
         };
         if cancel_clone.load(Ordering::Relaxed) {
-            state.finish();
+            state.done = true;
+            return glib::ControlFlow::Break;
+        }
+        if !state.attached {
+            state.view.set_buffer(Some(&state.buffer.clone()));
+            state.attached = true;
+        } else if state.view.buffer() != state.buffer {
+            state.done = true;
             return glib::ControlFlow::Break;
         }
         let start = Instant::now();
@@ -153,6 +159,7 @@ struct ParaKey {
 struct RenderState {
     buffer: gtk::TextBuffer,
     view: gtk::TextView,
+    attached: bool,
     document: Arc<Document>,
     zoom: f64,
     theme: AppTheme,
@@ -161,7 +168,7 @@ struct RenderState {
     link_tags: HashMap<usize, gtk::TextTag>,
     shade_tags: HashMap<Rgb, gtk::TextTag>,
     next_tag: u32,
-    output: Rc<RefCell<RenderOutput>>,
+    output: RenderOutput,
     image_cache: HashMap<usize, gdk::Texture>,
     rendered_images: u32,
     collect_outline: bool,
@@ -170,7 +177,7 @@ struct RenderState {
     block_index: usize,
     footer_index: usize,
     done: bool,
-    on_done: Option<Box<dyn Fn()>>,
+    on_done: Option<Box<dyn Fn(RenderOutput)>>,
 }
 
 impl RenderState {
@@ -217,8 +224,10 @@ impl RenderState {
     }
 
     fn finish(&mut self) {
+        self.done = true;
+        let output = std::mem::take(&mut self.output);
         if let Some(callback) = self.on_done.take() {
-            callback();
+            callback(output);
         }
     }
 
@@ -266,11 +275,7 @@ impl RenderState {
                 if title.is_empty() {
                     None
                 } else {
-                    Some((
-                        title,
-                        level,
-                        self.buffer.create_mark(None, &self.buffer.end_iter(), true),
-                    ))
+                    Some((title, level, self.buffer.end_iter().offset()))
                 }
             })
         } else {
@@ -295,11 +300,12 @@ impl RenderState {
         let end = self.buffer.end_iter();
         let tag = self.para_tag(&paragraph.props, extra, muted, paragraph.list.is_some());
         self.buffer.apply_tag(&tag, &start, &end);
-        if let Some((title, level, mark)) = outline_mark {
-            self.output
-                .borrow_mut()
-                .outline
-                .push(OutlineEntry { title, level, mark });
+        if let Some((title, level, offset)) = outline_mark {
+            self.output.outline.push(OutlineEntry {
+                title,
+                level,
+                offset,
+            });
         }
     }
 
@@ -320,12 +326,8 @@ impl RenderState {
             Inline::PageBreak => self.insert_rule(),
             Inline::Image(image) => self.render_image(image),
             Inline::Link { target, children } => {
-                let index = {
-                    let mut output = self.output.borrow_mut();
-                    let index = output.link_targets.len();
-                    output.link_targets.push(target.clone());
-                    index
-                };
+                let index = self.output.link_targets.len();
+                self.output.link_targets.push(target.clone());
                 for child in children {
                     self.render_inline(child, base, Some(index), extra, muted);
                 }
@@ -340,10 +342,7 @@ impl RenderState {
                 let mark = self
                     .buffer
                     .create_mark(Some(name), &self.buffer.end_iter(), true);
-                self.output
-                    .borrow_mut()
-                    .bookmarks
-                    .insert(name.clone(), mark);
+                self.output.bookmarks.insert(name.clone(), mark);
             }
             Inline::TextBox(blocks) => {
                 self.insert_text("[Text box]\n", &placeholder_run(), link, true);
@@ -616,7 +615,7 @@ impl RenderState {
         let mut end = self.buffer.end_iter();
         let anchor = self.buffer.create_child_anchor(&mut end);
         self.view.add_child_at_anchor(&picture, &anchor);
-        self.output.borrow_mut().pictures.push(picture);
+        self.output.pictures.push(picture);
         self.insert_text("\n", &RunProps::default(), None, false);
     }
 

@@ -42,4 +42,10 @@ One line per non-obvious decision. The build specification is background; this f
 
 - **Side scrollbar.** The outer `ScrolledWindow` wraps the page area, so the vertical scrollbar lives in the dark gutter instead of over the white page.
 
-- **Zoom stability.** Zoom re-renders into a fresh buffer. Child image widgets are released with the buffer rather than manually unparented, and the saved scroll offset is clamped to the new buffer length. A 12-cycle zoom in/out stress run passes under `G_DEBUG=fatal-criticals`.
+- **Zoom crash root cause and fix.** GTK aborted because `Ctrl`+wheel zoomed from inside the scroll event: the handler tore down the text buffer the event was still being dispatched against. Fixes:
+  - Wheel zoom is coalesced and deferred ~40 ms with `timeout_add_local_once`, so the buffer is never swapped during event dispatch.
+  - Each render builds a private buffer and attaches it only on the first idle tick; a render that is cancelled or whose buffer is no longer displayed stops instead of writing to the view.
+  - Each render produces its own `RenderOutput` and it replaces the published one only if the generation still matches, so stale `TextMark`s never reach the live document.
+  - Outline entries carry character offsets, not marks.
+  - The restored scroll offset is clamped to the new buffer, and the reading position is captured before re-rendering.
+  - Verified with 400 wheel-zoom events, 120 overlapping zoom spam events and combined outline/search/reload runs on three fixtures under `G_DEBUG=fatal-criticals`: zero criticals or crashes.
