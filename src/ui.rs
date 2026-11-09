@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
@@ -739,10 +739,10 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
         state.banner.set_reveal_child(false);
         state.search_matches.clear();
         state.search_index = 0;
+        output_reset(&state.render_output);
         state
             .text_view
             .set_buffer(Some(&gtk::TextBuffer::new(None)));
-        output_reset(&state.render_output);
         let name = state
             .path
             .as_deref()
@@ -791,6 +791,21 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
             set_zoom(&done_state, 0.25);
             return;
         }
+        if let Ok(steps) = std::env::var("DOCXLITE_SMOKE_ZOOM_STEPS") {
+            let limit = steps.parse::<usize>().unwrap_or(0);
+            let step = ZOOM_STEPS.fetch_add(1, Ordering::SeqCst);
+            if step < limit {
+                let delta = if step.is_multiple_of(2) { 0.2 } else { -0.2 };
+                if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
+                    eprintln!("zoom step {step}");
+                }
+                set_zoom(&done_state, delta);
+                return;
+            }
+            if step == limit && std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
+                std::process::exit(0);
+            }
+        }
         if std::env::var_os("DOCXLITE_SMOKE_OPEN").is_some() {
             show_open_dialog(&done_state);
         }
@@ -829,10 +844,10 @@ fn start_render(state: &Rc<RefCell<WindowState>>) {
         }
         state.search_matches.clear();
         state.search_index = 0;
+        output_reset(&state.render_output);
         state
             .text_view
             .set_buffer(Some(&gtk::TextBuffer::new(None)));
-        output_reset(&state.render_output);
         state.status.set_text("Rendering…");
         (
             document,
@@ -860,6 +875,21 @@ fn start_render(state: &Rc<RefCell<WindowState>>) {
         {
             state.sidebar.set_visible(true);
         }
+        if let Ok(steps) = std::env::var("DOCXLITE_SMOKE_ZOOM_STEPS") {
+            let limit = steps.parse::<usize>().unwrap_or(0);
+            let step = ZOOM_STEPS.fetch_add(1, Ordering::SeqCst);
+            if step < limit {
+                let delta = if step.is_multiple_of(2) { 0.2 } else { -0.2 };
+                if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
+                    eprintln!("zoom step {step}");
+                }
+                set_zoom(&done_state, delta);
+                return;
+            }
+            if std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
+                std::process::exit(0);
+            }
+        }
     });
     if let Ok(mut state) = state.try_borrow_mut() {
         state.cancel = Some(cancel);
@@ -868,6 +898,7 @@ fn start_render(state: &Rc<RefCell<WindowState>>) {
 
 fn output_reset(output: &Rc<RefCell<RenderOutput>>) {
     if let Ok(mut output) = output.try_borrow_mut() {
+        output.pictures.clear();
         output.link_targets.clear();
         output.bookmarks.clear();
         output.outline.clear();
@@ -894,6 +925,8 @@ fn show_banner(state: &Rc<RefCell<WindowState>>, text: &str) {
         state.banner.set_reveal_child(true);
     }
 }
+
+static ZOOM_STEPS: AtomicUsize = AtomicUsize::new(0);
 
 fn toggle_fullscreen(state: &Rc<RefCell<WindowState>>) {
     if let Ok(state) = state.try_borrow() {
@@ -958,6 +991,8 @@ fn restore_pending_scroll(state: &mut WindowState) {
         return;
     };
     let buffer = state.text_view.buffer();
+    let max_offset = buffer.char_count().max(0);
+    let offset = offset.clamp(0, max_offset);
     let mut iter = buffer.iter_at_offset(offset);
     state
         .text_view

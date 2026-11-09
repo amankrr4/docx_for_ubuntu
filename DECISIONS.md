@@ -41,3 +41,5 @@ One line per non-obvious decision. The build specification is background; this f
 - **Visible viewer chrome and heading outline.** The in-content toolbar carries outline, zoom, search, menu and fullscreen controls because server-side X11 decorations hide the custom titlebar. The sidebar is built from heading paragraphs and scrolls via `TextMark`s. Page thumbnails and per-page counts are intentionally not faked; they would require pagination.
 
 - **Side scrollbar.** The outer `ScrolledWindow` wraps the page area, so the vertical scrollbar lives in the dark gutter instead of over the white page.
+
+- **Zoom stability.** Zoom re-renders into a fresh buffer. Child image widgets are released with the buffer rather than manually unparented, and the saved scroll offset is clamped to the new buffer length. A 12-cycle zoom in/out stress run passes under `G_DEBUG=fatal-criticals`.

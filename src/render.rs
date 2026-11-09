@@ -24,6 +24,7 @@ pub struct RenderOutput {
     pub link_targets: Vec<LinkTarget>,
     pub bookmarks: HashMap<String, gtk::TextMark>,
     pub outline: Vec<OutlineEntry>,
+    pub pictures: Vec<gtk::Picture>,
 }
 
 pub struct OutlineEntry {
@@ -615,6 +616,7 @@ impl RenderState {
         let mut end = self.buffer.end_iter();
         let anchor = self.buffer.create_child_anchor(&mut end);
         self.view.add_child_at_anchor(&picture, &anchor);
+        self.output.borrow_mut().pictures.push(picture);
         self.insert_text("\n", &RunProps::default(), None, false);
     }
 
