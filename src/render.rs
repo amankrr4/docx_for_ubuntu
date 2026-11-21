@@ -36,7 +36,6 @@ pub struct OutlineEntry {
 pub fn render(
     view: gtk::TextView,
     document: Arc<Document>,
-    zoom: f64,
     theme: AppTheme,
     on_done: impl Fn(RenderOutput) + 'static,
 ) -> Arc<AtomicBool> {
@@ -48,7 +47,6 @@ pub fn render(
         view,
         attached: false,
         document,
-        zoom,
         theme,
         run_tags: HashMap::new(),
         para_tags: HashMap::new(),
@@ -161,7 +159,6 @@ struct RenderState {
     view: gtk::TextView,
     attached: bool,
     document: Arc<Document>,
-    zoom: f64,
     theme: AppTheme,
     run_tags: HashMap<RunKey, gtk::TextTag>,
     para_tags: HashMap<ParaKey, gtk::TextTag>,
@@ -263,7 +260,7 @@ impl RenderState {
         match block {
             Block::Paragraph(paragraph) => self.render_paragraph(paragraph, extra, muted),
             Block::Table(table) => self.render_table(table, extra, muted),
-            Block::PageBreak => self.insert_rule(),
+            Block::PageBreak => self.insert_page_break(),
         }
     }
 
@@ -323,7 +320,7 @@ impl RenderState {
             }
             Inline::Tab => self.insert_text("\t", base, link, muted),
             Inline::LineBreak => self.insert_text("\n", base, link, muted),
-            Inline::PageBreak => self.insert_rule(),
+            Inline::PageBreak => self.insert_page_break(),
             Inline::Image(image) => self.render_image(image),
             Inline::Link { target, children } => {
                 let index = self.output.link_targets.len();
@@ -377,6 +374,10 @@ impl RenderState {
         );
     }
 
+    fn insert_page_break(&mut self) {
+        self.insert_text("⁂\nPage break\n", &placeholder_run(), None, true);
+    }
+
     fn run_tag(&mut self, run: &RunProps, muted: bool) -> gtk::TextTag {
         let mut key = RunKey::from(run);
         key.muted = muted;
@@ -407,7 +408,7 @@ impl RenderState {
             .size_half_pt
             .map(|size| f64::from(size) / 2.0)
             .unwrap_or(11.0);
-        tag.set_size_points(base_points * self.zoom);
+        tag.set_size_points(base_points);
         if let Some(color) = run.color {
             tag.set_foreground_rgba(Some(&rgba(color)));
         }
@@ -484,7 +485,7 @@ impl RenderState {
             Align::Start => gtk::Justification::Left,
         });
         let hanging = if list { 24 } else { 0 };
-        let indent_left = twips_to_px_i32(props.indent_left_tw, self.zoom);
+        let indent_left = twips_to_px_i32(props.indent_left_tw);
         let left_extra = extra.saturating_add(hanging);
         if indent_left != 0 || left_extra != 0 || list {
             tag.set_left_margin(
@@ -494,20 +495,20 @@ impl RenderState {
                     .saturating_add(left_extra),
             );
         }
-        let indent_right = twips_to_px_i32(props.indent_right_tw, self.zoom);
+        let indent_right = twips_to_px_i32(props.indent_right_tw);
         if indent_right != 0 {
             tag.set_right_margin(self.view.right_margin().saturating_add(indent_right));
         }
         let first = if list {
             -hanging
         } else {
-            twips_to_px_i32(props.indent_first_tw, self.zoom)
+            twips_to_px_i32(props.indent_first_tw)
         };
         if first != 0 {
             tag.set_indent(first);
         }
-        tag.set_pixels_above_lines(twips_to_px_u32(props.space_before_tw, self.zoom));
-        tag.set_pixels_below_lines(twips_to_px_u32(props.space_after_tw, self.zoom));
+        tag.set_pixels_above_lines(twips_to_px_u32(props.space_before_tw));
+        tag.set_pixels_below_lines(twips_to_px_u32(props.space_after_tw));
         if let Some(line) = props.line_height {
             tag.set_line_height(line);
         }
@@ -521,7 +522,7 @@ impl RenderState {
                     crate::model::TabAlign::Decimal => pango::TabAlign::Decimal,
                 };
                 let index = i32::try_from(index).unwrap_or(i32::MAX);
-                tabs.set_tab(index, alignment, twips_to_px_i32(stop.pos_tw, self.zoom));
+                tabs.set_tab(index, alignment, twips_to_px_i32(stop.pos_tw));
             }
             tag.set_tabs(Some(&tabs));
         }
@@ -693,7 +694,7 @@ impl RenderState {
             .col_widths_tw
             .iter()
             .take(columns)
-            .map(|width| twips_to_px_u32(*width, self.zoom))
+            .map(|width| twips_to_px_u32(*width))
             .collect();
         if widths.len() < columns {
             let base = content / i32::try_from(columns).unwrap_or(1);

@@ -22,6 +22,8 @@ pub mod render;
 pub mod theme;
 #[cfg(feature = "gui")]
 pub mod ui;
+#[cfg(feature = "gui")]
+pub mod zoom_view;
 
 pub use error::{LoadError, Result};
 pub use model::Document;

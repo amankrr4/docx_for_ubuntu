@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
@@ -13,6 +13,7 @@ use crate::error::LoadError;
 use crate::model::{Document, LinkTarget};
 use crate::render::{self, RenderOutput};
 use crate::theme::{self, AppTheme};
+use crate::zoom_view::ZoomView;
 
 pub fn run(files: Vec<String>) -> glib::ExitCode {
     let mut flags = gio::ApplicationFlags::HANDLES_OPEN;
@@ -74,18 +75,19 @@ fn install_css() {
          .docx-empty-title { font-size: 1.2em; }\n\
          .docx-body { background-color: #2c2c2c; color: #f2f2f2; }\n\
          .docx-page { background-color: #ffffff; }\n\
-         .docx-text { background-color: #ffffff; color: #1a1a1a; }\n\
+         .docx-text { background-color: transparent; color: #1a1a1a; }\n\
          .docx-toolbar { background-color: #2c2c2c; padding: 4px 8px; }\n\
          .docx-toolbar button, .docx-toolbar menubutton > button { background-color: #3a3a3a; background-image: none; color: #f2f2f2; border-color: #4a4a4a; box-shadow: none; }\n\
          .docx-toolbar button:hover, .docx-toolbar menubutton > button:hover { background-color: #484848; }\n\
          .docx-toolbar button:checked, .docx-toolbar menubutton > button:checked { background-color: #555555; }\n\
          .docx-scroll { background-color: #2c2c2c; }\n\
          .docx-sidebar-list { background-color: #242424; }\n\
-         .docx-sidebar-list button { background: transparent; color: #f2f2f2; padding: 2px 4px; }\n\
+         .docx-sidebar-list button { background: none; background-image: none; border: none; box-shadow: none; color: #f2f2f2; padding: 1px 6px; min-height: 0; font-size: 0.9em; }\n\
+         .docx-sidebar-list button:hover { background-color: #333333; }\n\
          .docx-outline-item { color: #f2f2f2; }\n\
-         .docx-outline-level-2 { padding-left: 12px; }\n\
-         .docx-outline-level-3 { padding-left: 24px; }\n\
-         .docx-outline-level-4 { padding-left: 36px; }\n\
+         .docx-outline-level-2 { padding-left: 10px; }\n\
+         .docx-outline-level-3 { padding-left: 18px; }\n\
+         .docx-outline-level-4 { padding-left: 26px; }\n\
          .docx-outline-empty { color: #d0d0d0; padding: 8px; }\n\
          .docx-statusbar { background-color: #2c2c2c; padding: 4px 8px; }\n\
          .docx-statusbar .docx-status { padding: 0; }\n\
@@ -101,6 +103,108 @@ fn install_css() {
     );
 }
 
+const PAGE_WIDTH: i32 = 816;
+const SIDEBAR_WIDTH: i32 = 160;
+const PAGE_HEIGHT: i32 = 1056;
+const ZOOM_LEVELS: [f64; 10] = [0.5, 0.7, 0.85, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0, 4.0];
+
+#[derive(Clone, Copy, PartialEq)]
+enum ZoomMode {
+    FitPage,
+    FitWidth,
+    Automatic,
+    Level(f64),
+}
+
+fn build_zoom_menu(container: &gtk::Box) -> Rc<Vec<(ZoomMode, gtk::CheckButton)>> {
+    let mut items: Vec<(ZoomMode, gtk::CheckButton)> = Vec::new();
+    let mut add = |container: &gtk::Box, mode: ZoomMode, text: &str| {
+        let button = gtk::CheckButton::with_label(text);
+        if let Some((_, first)) = items.first() {
+            button.set_group(Some(first));
+        }
+        container.append(&button);
+        items.push((mode, button));
+    };
+    add(container, ZoomMode::FitPage, "Fit Page");
+    add(container, ZoomMode::FitWidth, "Fit Width");
+    add(container, ZoomMode::Automatic, "Automatic");
+    container.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    for level in ZOOM_LEVELS {
+        add(container, ZoomMode::Level(level), &format_zoom(level));
+    }
+    for (mode, button) in &items {
+        if *mode == ZoomMode::Automatic {
+            button.set_active(true);
+        }
+    }
+    Rc::new(items)
+}
+
+fn format_zoom(scale: f64) -> String {
+    let percent = scale * 100.0;
+    if (percent - percent.round()).abs() < 0.05 {
+        format!("{}%", percent.round() as i32)
+    } else {
+        format!("{percent:.1}%")
+    }
+}
+
+fn zoom_scale_for(state: &WindowState, mode: ZoomMode) -> f64 {
+    let width = f64::from(state.view_scroll.width().max(1));
+    let height = f64::from(state.view_scroll.height().max(1));
+    let width_scale = width / f64::from(PAGE_WIDTH);
+    let page_scale = (width / f64::from(PAGE_WIDTH)).min(height / f64::from(PAGE_HEIGHT));
+    let scale = match mode {
+        ZoomMode::Level(level) => level,
+        ZoomMode::FitWidth => width_scale,
+        ZoomMode::FitPage => page_scale,
+        ZoomMode::Automatic => {
+            if width_scale < 1.0 {
+                width_scale
+            } else {
+                1.0
+            }
+        }
+    };
+    scale.clamp(0.25, 4.0)
+}
+
+fn apply_zoom(state: &Rc<RefCell<WindowState>>, mode: ZoomMode) {
+    let Ok(mut state) = state.try_borrow_mut() else {
+        return;
+    };
+    if state.zoom_mode == mode
+        && state.zoom_items.iter().any(|(item, _)| *item == mode)
+        && (state.zoom - zoom_scale_for(&state, mode)).abs() < 1e-6
+    {
+        return;
+    }
+    let scale = zoom_scale_for(&state, mode);
+    let ratio = scale / state.zoom;
+    state.zoom = scale;
+    state.zoom_mode = mode;
+    state.zoom_label.set_label(&format_zoom(scale));
+    state.zoom_view.set_scale(scale);
+    for (item_mode, button) in state.zoom_items.iter() {
+        button.set_active(*item_mode == mode);
+    }
+    if (ratio - 1.0).abs() > f64::EPSILON {
+        scale_scroll(&state.view_scroll.hadjustment(), ratio);
+        scale_scroll(&state.view_scroll.vadjustment(), ratio);
+    }
+}
+
+fn refresh_zoom(state: &Rc<RefCell<WindowState>>) {
+    let mode = {
+        let Ok(state) = state.try_borrow() else {
+            return;
+        };
+        state.zoom_mode
+    };
+    apply_zoom(state, mode);
+}
+
 struct WindowState {
     window: gtk::ApplicationWindow,
     stack: gtk::Stack,
@@ -108,20 +212,23 @@ struct WindowState {
     outline_box: gtk::Box,
     empty_label: gtk::Label,
     text_view: gtk::TextView,
-    page_box: gtk::Box,
+    view_scroll: gtk::ScrolledWindow,
+    zoom_view: ZoomView,
     search_bar: gtk::SearchBar,
     search_entry: gtk::SearchEntry,
     search_button: gtk::ToggleButton,
     banner: gtk::Revealer,
     banner_label: gtk::Label,
     status: gtk::Label,
+    page_label: gtk::Label,
     zoom_label: gtk::MenuButton,
+    zoom_mode: ZoomMode,
+    zoom_items: Rc<Vec<(ZoomMode, gtk::CheckButton)>>,
     path: Option<PathBuf>,
     document: Option<Arc<Document>>,
     zoom: f64,
     generation: u64,
     cancel: Option<Arc<AtomicBool>>,
-    pending_scroll: Option<i32>,
     search_matches: Vec<(i32, i32)>,
     search_index: usize,
     render_output: Rc<RefCell<RenderOutput>>,
@@ -129,11 +236,28 @@ struct WindowState {
     theme: AppTheme,
 }
 
+fn default_window_size() -> (i32, i32) {
+    let monitor = gdk::Display::default().and_then(|display| {
+        display
+            .monitors()
+            .item(0)
+            .and_then(|obj| obj.downcast::<gdk::Monitor>().ok())
+    });
+    let Some(geometry) = monitor.map(|monitor| monitor.geometry()) else {
+        return (620, 520);
+    };
+    let factor = 0.2_f64.sqrt();
+    let width = (f64::from(geometry.width()) * factor).clamp(420.0, 1000.0);
+    let height = (f64::from(geometry.height()) * factor).clamp(420.0, 900.0);
+    (width as i32, height as i32)
+}
+
 fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<WindowState>> {
+    let (default_width, default_height) = default_window_size();
     let window = gtk::ApplicationWindow::builder()
         .application(app)
-        .default_width(864)
-        .default_height(1000)
+        .default_width(default_width)
+        .default_height(default_height)
         .build();
     window.set_title(Some("DocxLite"));
 
@@ -155,17 +279,12 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     zoom_button.set_label("100%");
     zoom_button.set_tooltip_text(Some("Zoom"));
     let zoom_popover = gtk::Popover::new();
-    let zoom_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let zoom_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
     zoom_box.set_margin_top(6);
     zoom_box.set_margin_bottom(6);
     zoom_box.set_margin_start(6);
     zoom_box.set_margin_end(6);
-    let zoom_in = gtk::Button::with_label("Zoom in");
-    let zoom_out = gtk::Button::with_label("Zoom out");
-    let zoom_reset = gtk::Button::with_label("Reset zoom");
-    zoom_box.append(&zoom_in);
-    zoom_box.append(&zoom_out);
-    zoom_box.append(&zoom_reset);
+    let zoom_items = build_zoom_menu(&zoom_box);
     zoom_popover.set_child(Some(&zoom_box));
     zoom_button.set_popover(Some(&zoom_popover));
     let menu_button = gtk::MenuButton::new();
@@ -224,15 +343,21 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     stack.set_hexpand(true);
 
     let sidebar = gtk::ScrolledWindow::new();
-    sidebar.set_size_request(220, -1);
+    sidebar.set_size_request(SIDEBAR_WIDTH, -1);
+    sidebar.set_propagate_natural_width(false);
+    sidebar.set_max_content_width(SIDEBAR_WIDTH);
+    sidebar.set_min_content_width(SIDEBAR_WIDTH);
+    sidebar.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
     sidebar.set_vexpand(true);
     sidebar.set_visible(false);
     let outline_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
     outline_box.add_css_class("docx-sidebar-list");
+    outline_box.set_halign(gtk::Align::Fill);
     sidebar.set_child(Some(&outline_box));
 
     let content_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     content_box.set_vexpand(true);
+    sidebar.set_hexpand(false);
     content_box.append(&sidebar);
     content_box.append(&stack);
     body.append(&content_box);
@@ -253,19 +378,7 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     text_box.set_vexpand(true);
     let page_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
     page_box.add_css_class("docx-page");
-    page_box.set_halign(gtk::Align::Center);
     page_box.set_vexpand(true);
-    page_box.set_hexpand(false);
-    page_box.set_width_request(816);
-    let view_scroll = gtk::ScrolledWindow::new();
-    view_scroll.set_vexpand(true);
-    view_scroll.set_hexpand(true);
-    view_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    view_scroll.add_css_class("docx-scroll");
-    let page_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    page_area.set_halign(gtk::Align::Fill);
-    page_area.set_vexpand(true);
-    page_area.set_hexpand(true);
     let text_view = gtk::TextView::new();
     text_view.set_editable(false);
     text_view.set_cursor_visible(false);
@@ -276,10 +389,18 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     text_view.set_bottom_margin(48);
     text_view.set_vexpand(true);
     text_view.add_css_class("docx-text");
-    page_box.set_vexpand(true);
     page_box.append(&text_view);
-    page_area.append(&page_box);
-    view_scroll.set_child(Some(&page_area));
+    let zoom_view = ZoomView::new(&page_box, PAGE_WIDTH);
+    let viewport = gtk::Viewport::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+    viewport.set_hscroll_policy(gtk::ScrollablePolicy::Natural);
+    viewport.set_vscroll_policy(gtk::ScrollablePolicy::Natural);
+    viewport.set_child(Some(&zoom_view));
+    let view_scroll = gtk::ScrolledWindow::new();
+    view_scroll.set_vexpand(true);
+    view_scroll.set_hexpand(true);
+    view_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+    view_scroll.add_css_class("docx-scroll");
+    view_scroll.set_child(Some(&viewport));
     text_box.append(&view_scroll);
     stack.add_named(&text_box, Some("text"));
     stack.set_visible_child_name("empty");
@@ -292,6 +413,10 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
     status.set_hexpand(true);
     status.set_ellipsize(gtk::pango::EllipsizeMode::End);
     status_bar.append(&status);
+    let page_label = gtk::Label::new(None);
+    page_label.add_css_class("docx-status");
+    page_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    status_bar.append(&page_label);
     body.append(&status_bar);
 
     let theme = theme::detect(&window);
@@ -302,20 +427,23 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         outline_box: outline_box.clone(),
         empty_label,
         text_view: text_view.clone(),
-        page_box: page_box.clone(),
+        view_scroll: view_scroll.clone(),
+        zoom_view: zoom_view.clone(),
         search_bar: search_bar.clone(),
         search_entry: search_entry.clone(),
         search_button: search_button.clone(),
         banner,
         banner_label,
         status,
+        page_label: page_label.clone(),
         zoom_label: zoom_button.clone(),
+        zoom_mode: ZoomMode::Automatic,
+        zoom_items,
         path: None,
         document: None,
         zoom: 1.0,
         generation: 0,
         cancel: None,
-        pending_scroll: None,
         search_matches: Vec::new(),
         search_index: 0,
         render_output: Rc::new(RefCell::new(RenderOutput::default())),
@@ -350,14 +478,20 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         text_view.add_controller(scroll);
     }
     {
+        let scroll_state = state.clone();
+        let adjustment = state.borrow().view_scroll.vadjustment();
+        adjustment.connect_value_changed(move |_| update_page_status(&scroll_state));
+    }
+    {
         let resize_state = state.clone();
         glib::timeout_add_local(Duration::from_millis(200), move || {
-            if let Ok(state) = resize_state.try_borrow() {
-                if !state.window.is_visible() {
-                    return glib::ControlFlow::Break;
-                }
-                update_page_width(&state);
+            match resize_state.try_borrow() {
+                Ok(state) if !state.window.is_visible() => return glib::ControlFlow::Break,
+                Ok(_) => {}
+                Err(_) => return glib::ControlFlow::Continue,
             }
+            refresh_zoom(&resize_state);
+            update_page_status(&resize_state);
             glib::ControlFlow::Continue
         });
     }
@@ -408,17 +542,14 @@ fn open_window(app: &gtk::Application, path: Option<PathBuf>) -> Rc<RefCell<Wind
         });
         search_entry.add_controller(key);
     }
-    {
+    let zoom_items = state.borrow().zoom_items.clone();
+    for (mode, button) in zoom_items.iter().map(|(m, b)| (*m, b.clone())) {
         let state = state.clone();
-        zoom_in.connect_clicked(move |_| set_zoom(&state, 0.25));
-    }
-    {
-        let state = state.clone();
-        zoom_out.connect_clicked(move |_| set_zoom(&state, -0.25));
-    }
-    {
-        let state = state.clone();
-        zoom_reset.connect_clicked(move |_| set_zoom(&state, 0.0));
+        button.connect_toggled(move |button| {
+            if button.is_active() {
+                apply_zoom(&state, mode);
+            }
+        });
     }
     {
         let sidebar = sidebar.clone();
@@ -526,7 +657,7 @@ fn install_link_handlers(state: &Rc<RefCell<WindowState>>) {
         let Ok(state) = motion_state.try_borrow() else {
             return;
         };
-        let Some(iter) = state.text_view.iter_at_location(x as i32, y as i32) else {
+        let Some(iter) = iter_at_widget_point(&state.text_view, x, y) else {
             state.status.set_text("");
             state.text_view.set_cursor_from_name(None);
             return;
@@ -557,7 +688,7 @@ fn install_link_handlers(state: &Rc<RefCell<WindowState>>) {
         let Ok(state) = click_state.try_borrow() else {
             return;
         };
-        let Some(iter) = state.text_view.iter_at_location(x as i32, y as i32) else {
+        let Some(iter) = iter_at_widget_point(&state.text_view, x, y) else {
             return;
         };
         let Some(index) = link_index_at(&iter) else {
@@ -677,7 +808,6 @@ fn start_load(state: &Rc<RefCell<WindowState>>, path: PathBuf) {
         state.document = None;
         state.search_matches.clear();
         state.search_index = 0;
-        state.pending_scroll = None;
         state.sidebar.set_visible(false);
         clear_outline_list(&state.outline_box);
         state.render_output.borrow_mut().link_targets.clear();
@@ -731,7 +861,7 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
     let warnings = document.warning_count();
     let truncated = document.truncated;
     let document = Arc::new(document);
-    let (view, zoom, theme) = {
+    let (view, theme) = {
         let Ok(mut state) = state.try_borrow_mut() else {
             return;
         };
@@ -758,7 +888,7 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
             format!("{name} — DocxLite")
         };
         state.window.set_title(Some(&title));
-        (state.text_view.clone(), state.zoom, state.theme.clone())
+        (state.text_view.clone(), state.theme.clone())
     };
     if warnings > 0 {
         show_banner(
@@ -769,7 +899,7 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
         );
     }
     let done_state = state.clone();
-    let cancel = render::render(view, document, zoom, theme, move |fresh| {
+    let cancel = render::render(view, document, theme, move |fresh| {
         if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
             eprintln!("smoke on_done");
         }
@@ -780,12 +910,30 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
             state.status.set_text("");
         }
         populate_outline(&done_state);
+        update_page_status(&done_state);
         {
             static SPAM_STARTED: AtomicBool = AtomicBool::new(false);
             if !SPAM_STARTED.swap(true, Ordering::SeqCst) {
                 start_wheel_stress(&done_state);
                 start_zoom_spam(&done_state);
             }
+        }
+        if let Some(level) = std::env::var("DOCXLITE_SMOKE_ZOOM_LEVEL")
+            .ok()
+            .and_then(|scale| scale.parse::<f64>().ok())
+        {
+            let mode = match level {
+                -1.0 => ZoomMode::FitPage,
+                -2.0 => ZoomMode::FitWidth,
+                -3.0 => ZoomMode::Automatic,
+                value => ZoomMode::Level(value),
+            };
+            apply_zoom(&done_state, mode);
+        }
+        if std::env::var_os("DOCXLITE_SMOKE_ZOOM_MENU").is_some()
+            && let Ok(state) = done_state.try_borrow()
+        {
+            state.zoom_label.popup();
         }
         if std::env::var_os("DOCXLITE_SMOKE_OUTLINE").is_some()
             && let Ok(state) = done_state.try_borrow()
@@ -798,20 +946,8 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
             set_zoom(&done_state, 0.25);
             return;
         }
-        if let Ok(steps) = std::env::var("DOCXLITE_SMOKE_ZOOM_STEPS") {
-            let limit = steps.parse::<usize>().unwrap_or(0);
-            let step = ZOOM_STEPS.fetch_add(1, Ordering::SeqCst);
-            if step < limit {
-                let delta = if step.is_multiple_of(2) { 0.2 } else { -0.2 };
-                if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
-                    eprintln!("zoom step {step}");
-                }
-                set_zoom(&done_state, delta);
-                return;
-            }
-            if step == limit && std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
-                std::process::exit(0);
-            }
+        if start_zoom_steps(&done_state) {
+            return;
         }
         if std::env::var_os("DOCXLITE_SMOKE_OPEN").is_some() {
             show_open_dialog(&done_state);
@@ -836,100 +972,6 @@ fn show_document(state: &Rc<RefCell<WindowState>>, generation: u64, document: Do
         state.cancel = Some(cancel);
         state.status.set_text("Rendering…");
     }
-}
-
-fn start_render(state: &Rc<RefCell<WindowState>>) {
-    let (document, view, zoom, theme, generation) = {
-        let Ok(mut state) = state.try_borrow_mut() else {
-            return;
-        };
-        let Some(document) = state.document.clone() else {
-            return;
-        };
-        if let Some(cancel) = state.cancel.take() {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        state.search_matches.clear();
-        state.search_index = 0;
-        if let Some(iter) = state.text_view.iter_at_location(0, 0) {
-            state.pending_scroll = Some(iter.offset());
-        }
-        state.status.set_text("Rendering…");
-        (
-            document,
-            state.text_view.clone(),
-            state.zoom,
-            state.theme.clone(),
-            state.generation,
-        )
-    };
-    let done_state = state.clone();
-    let cancel = render::render(view, document, zoom, theme, move |fresh| {
-        if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
-            eprintln!("smoke on_done");
-        }
-        if let Ok(mut state) = done_state.try_borrow_mut()
-            && state.generation == generation
-        {
-            publish_output(&state.render_output, fresh);
-            state.status.set_text("");
-            restore_pending_scroll(&mut state);
-        }
-        populate_outline(&done_state);
-        {
-            static SPAM_STARTED: AtomicBool = AtomicBool::new(false);
-            if !SPAM_STARTED.swap(true, Ordering::SeqCst) {
-                start_wheel_stress(&done_state);
-                start_zoom_spam(&done_state);
-            }
-        }
-        if std::env::var_os("DOCXLITE_SMOKE_OUTLINE").is_some()
-            && let Ok(state) = done_state.try_borrow()
-        {
-            state.sidebar.set_visible(true);
-        }
-        run_zoom_stress(&done_state);
-    });
-    if let Ok(mut state) = state.try_borrow_mut() {
-        state.cancel = Some(cancel);
-    }
-}
-
-static ZOOM_STEPS: AtomicUsize = AtomicUsize::new(0);
-
-fn run_zoom_stress(state: &Rc<RefCell<WindowState>>) {
-    let Ok(steps) = std::env::var("DOCXLITE_SMOKE_ZOOM_STEPS") else {
-        return;
-    };
-    let limit = steps.parse::<usize>().unwrap_or(0);
-    let step = ZOOM_STEPS.fetch_add(1, Ordering::SeqCst);
-    if step >= limit {
-        if std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
-            std::process::exit(0);
-        }
-        return;
-    }
-    let pattern = std::env::var("DOCXLITE_SMOKE_ZOOM_PATTERN").unwrap_or_default();
-    let delta = match pattern.as_str() {
-        "up" => 0.25,
-        "down" => -0.25,
-        "jitter" => match step % 3 {
-            0 => 0.5,
-            1 => -0.5,
-            _ => 0.25,
-        },
-        _ => {
-            if step.is_multiple_of(2) {
-                0.2
-            } else {
-                -0.2
-            }
-        }
-    };
-    if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
-        eprintln!("zoom step {step} delta {delta}");
-    }
-    set_zoom(state, delta);
 }
 
 fn queue_wheel_zoom(
@@ -978,6 +1020,47 @@ fn start_wheel_stress(state: &Rc<RefCell<WindowState>>) {
         queue_wheel_zoom(&wheel_state, &pending, &scheduled, step);
         glib::ControlFlow::Continue
     });
+}
+
+fn start_zoom_steps(state: &Rc<RefCell<WindowState>>) -> bool {
+    let Ok(steps) = std::env::var("DOCXLITE_SMOKE_ZOOM_STEPS") else {
+        return false;
+    };
+    let limit = steps.parse::<usize>().unwrap_or(0);
+    let pattern = std::env::var("DOCXLITE_SMOKE_ZOOM_PATTERN").unwrap_or_default();
+    let steps_state = state.clone();
+    let mut step = 0usize;
+    glib::timeout_add_local(Duration::from_millis(40), move || {
+        if step >= limit {
+            if std::env::var_os("DOCXLITE_SMOKE_EXIT").is_some() {
+                std::process::exit(0);
+            }
+            return glib::ControlFlow::Break;
+        }
+        let delta = match pattern.as_str() {
+            "up" => 0.25,
+            "down" => -0.25,
+            "jitter" => match step % 3 {
+                0 => 0.5,
+                1 => -0.5,
+                _ => 0.25,
+            },
+            _ => {
+                if step.is_multiple_of(2) {
+                    0.2
+                } else {
+                    -0.2
+                }
+            }
+        };
+        if std::env::var_os("DOCXLITE_SMOKE_LOG").is_some() {
+            eprintln!("zoom step {step} delta {delta}");
+        }
+        set_zoom(&steps_state, delta);
+        step = step.saturating_add(1);
+        glib::ControlFlow::Continue
+    });
+    true
 }
 
 fn start_zoom_spam(state: &Rc<RefCell<WindowState>>) {
@@ -1079,8 +1162,8 @@ fn populate_outline(state: &Rc<RefCell<WindowState>>) {
     for (title, level, offset) in entries {
         let label = gtk::Label::new(Some(&title));
         label.set_xalign(0.0);
-        label.set_wrap(true);
-        label.set_max_width_chars(28);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_max_width_chars(16);
         let button = gtk::Button::new();
         button.set_child(Some(&label));
         button.set_halign(gtk::Align::Start);
@@ -1098,40 +1181,73 @@ fn populate_outline(state: &Rc<RefCell<WindowState>>) {
     }
 }
 
-fn restore_pending_scroll(state: &mut WindowState) {
-    let Some(offset) = state.pending_scroll.take() else {
+fn set_zoom(state: &Rc<RefCell<WindowState>>, delta: f64) {
+    let Ok(state_ref) = state.try_borrow() else {
         return;
     };
-    let buffer = state.text_view.buffer();
-    let max_offset = buffer.char_count().max(0);
-    let offset = offset.clamp(0, max_offset);
-    let mut iter = buffer.iter_at_offset(offset);
-    state
-        .text_view
-        .scroll_to_iter(&mut iter, 0.1, true, 0.0, 0.35);
+    let current = state_ref.zoom;
+    let level = if delta == 0.0 {
+        1.0
+    } else if delta > 0.0 {
+        ZOOM_LEVELS
+            .iter()
+            .copied()
+            .find(|level| *level > current + 1e-6)
+            .or_else(|| ZOOM_LEVELS.last().copied())
+            .unwrap_or(1.0)
+    } else {
+        ZOOM_LEVELS
+            .iter()
+            .copied()
+            .rev()
+            .find(|level| *level < current - 1e-6)
+            .unwrap_or(0.5)
+    };
+    drop(state_ref);
+    apply_zoom(state, ZoomMode::Level(level));
 }
 
-fn set_zoom(state: &Rc<RefCell<WindowState>>, delta: f64) {
-    let changed = {
-        let Ok(mut state) = state.try_borrow_mut() else {
+fn scale_scroll(adjustment: &gtk::Adjustment, ratio: f64) {
+    if ratio <= 0.0 {
+        return;
+    }
+    let max = (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+    let value = (adjustment.value() * ratio).clamp(adjustment.lower(), max);
+    adjustment.set_value(value);
+}
+
+fn update_page_status(state: &Rc<RefCell<WindowState>>) {
+    let (content_height, scale, offset, page_size) = {
+        let Ok(state) = state.try_borrow() else {
             return;
         };
-        let next = if delta == 0.0 {
-            1.0
-        } else {
-            (state.zoom + delta).clamp(0.5, 3.0)
-        };
-        if (next - state.zoom).abs() < f64::EPSILON {
-            return;
-        }
-        state.zoom = next;
-        state
-            .zoom_label
-            .set_label(&format!("{}%", (next * 100.0).round() as i32));
-        state.document.is_some()
+        let (_, content_height, _, _) = state
+            .text_view
+            .measure(gtk::Orientation::Vertical, PAGE_WIDTH - 128);
+        let adjustment = state.view_scroll.vadjustment();
+        (
+            content_height.max(1),
+            state.zoom,
+            adjustment.value(),
+            adjustment.page_size(),
+        )
     };
-    if changed {
-        start_render(state);
+    let page_px = f64::from(PAGE_HEIGHT);
+    let total = (f64::from(content_height) / page_px).ceil().max(1.0) as i32;
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    let top = offset.max(0.0) / scale;
+    let visible = page_size.max(0.0) / scale;
+    let first = (top / page_px).floor() as i32 + 1;
+    let last = ((top + visible) / page_px).ceil() as i32;
+    let text = if !visible.is_finite() || visible <= 0.0 {
+        format!("{total} pages")
+    } else if first == last {
+        format!("Page {first} of {total}")
+    } else {
+        format!("Pages {first}–{last} of {total}")
+    };
+    if let Ok(state) = state.try_borrow() {
+        state.page_label.set_text(&text);
     }
 }
 
@@ -1242,6 +1358,15 @@ fn search_tag(buffer: &gtk::TextBuffer, name: &str, color: gdk::RGBA) -> gtk::Te
     tag
 }
 
+fn iter_at_widget_point(view: &gtk::TextView, x: f64, y: f64) -> Option<gtk::TextIter> {
+    let (x, y) = view.window_to_buffer_coords(
+        gtk::TextWindowType::Widget,
+        x.round() as i32,
+        y.round() as i32,
+    );
+    view.iter_at_location(x, y)
+}
+
 fn link_index_at(iter: &gtk::TextIter) -> Option<usize> {
     iter.tags().iter().find_map(|tag| {
         tag.name().and_then(|name| {
@@ -1265,30 +1390,6 @@ fn allowed_scheme(url: &str) -> bool {
             "http" | "https" | "mailto"
         )
     })
-}
-
-fn update_page_width(state: &WindowState) {
-    let window_width = state.window.width();
-    let content_width = if state.stack.width() > 100 {
-        state.stack.width()
-    } else {
-        window_width
-    };
-    if content_width <= 0 {
-        return;
-    }
-    let available = content_width.saturating_sub(48).max(200);
-    let desired = ((available as f64).min(816.0 * state.zoom)).round() as i32;
-    let desired_height = if state.stack.height() > 100 {
-        state.stack.height()
-    } else {
-        -1
-    };
-    if state.page_box.width_request() != desired
-        || (desired_height > 0 && state.page_box.height_request() != desired_height)
-    {
-        state.page_box.set_size_request(desired, desired_height);
-    }
 }
 
 fn file_name(path: &std::path::Path) -> String {

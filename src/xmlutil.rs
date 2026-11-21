@@ -137,12 +137,12 @@ pub fn parse_underline(value: &str) -> bool {
     )
 }
 
-pub fn twips_to_px_i32(twips: i32, zoom: f64) -> i32 {
-    (f64::from(twips) / 20.0 * (96.0 / 72.0) * zoom).round() as i32
+pub fn twips_to_px_i32(twips: i32) -> i32 {
+    (f64::from(twips) / 20.0 * (96.0 / 72.0)).round() as i32
 }
 
-pub fn twips_to_px_u32(twips: u32, zoom: f64) -> i32 {
-    (f64::from(twips) / 20.0 * (96.0 / 72.0) * zoom).round() as i32
+pub fn twips_to_px_u32(twips: u32) -> i32 {
+    (f64::from(twips) / 20.0 * (96.0 / 72.0)).round() as i32
 }
 
 pub fn emu_to_px(emu: i64) -> u32 {

@@ -38,7 +38,9 @@ Run on Ubuntu 22.04, 24.04 and the newest LTS.
 - [ ] Enter/Shift+Enter moves next/previous and wraps.
 - [ ] Esc closes search.
 - [ ] Ctrl + mouse wheel zooms in/out over the page.
-- [ ] Zoom in/out/reset re-renders without losing text or links.
+- [ ] Zoom menu offers Fit Page, Fit Width, Automatic and 50–400%, with the active mode checked.
+- [ ] Fit Page shows the whole page; Fit Width fills the window width; Automatic stays at 100% when space allows.
+- [ ] Zoom in/out/reset scales the page without re-flowing text or moving line breaks.
 - [ ] Search after zoom still works.
 
 ## Themes and display

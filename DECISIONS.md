@@ -28,13 +28,16 @@ One line per non-obvious decision. The build specification is background; this f
 
 - **Local-only artifact baseline.** The checked-out local `.deb` was built on Ubuntu 24.04 (glibc 2.39/GTK 4.14) because no 22.04 container/sudo was available. The release workflow uses `ubuntu:22.04` for the older glibc/GTK baseline. The crate compiles with the `v4_6` feature, but the 22.04 runtime was not exercised locally.
 
-- **Centred white page column.** The text view is wrapped in a responsive white page box capped at 816 px × zoom, centred over dark gutters. On narrow windows the page shrinks to the available width; a 200 ms resize poll adjusts the page width. Page padding is 64 px left/right and 48 px top/bottom, and paragraph margins are applied relative to that padding.
+- **Centred white page column.** The text view is wrapped in a white page box of 816×1056 px (A4 at 96 dpi), centred over dark gutters. The box size never changes at runtime, so resizing and zooming scale it instead of re-flowing text. Page padding is 64 px left/right and 48 px top/bottom, and paragraph margins are applied relative to that padding.
+- **Static zoom via a scaled allocation.** The page is laid out once at 100% inside `ZoomView`, a `GtkWidget` subclass that allocates its child with a `GskTransform` scale. GTK applies that transform to painting and to input picking, so text never re-wraps or re-flows while zooming. The scrolled window sees the scaled size, so the page pans horizontally when the zoomed page is wider than the window; the scroll offsets are rescaled by the zoom ratio to keep the reading position.
+- **Zoom control mirrors GNOME Papers.** A `MenuButton` popover offers Fit Page, Fit Width, Automatic and fixed presets (50–400%), grouped as radio items like the system document viewer. The page is a fixed 816×1056 px box, so fit modes change only the scale; they never re-wrap text. Automatic keeps 100% when the window is wide enough and shrinks to fit the width otherwise; a 200 ms poll re-evaluates it on resize. `Ctrl`+wheel and `Ctrl`+=/− step through the presets.
 
 - **Gutters match the titlebar.** The non-page chrome uses `#2c2c2c`, sampled from the system titlebar, so the dark gutters blend with the top border while the page stays white.
 
-- **Default window matches the page.** The window opens at 864×1000, giving the 816 px white page 24 px side gutters; the page still shrinks responsively on smaller screens.
+- **Default window matches the page.** The window opens at 20% of the monitor's area (about 44% of its width and height, clamped to 420–1000 × 420–900), so it feels like a small reader window rather than a full-screen app. The page is sized to fit at 100% in that width.
+- **The page must not report a huge minimum size.** `ZoomView` reports `min(natural, 200)` for both axes even though its natural height is the whole document. Otherwise the window's minimum grows to the document height, and Mutter's `auto-maximize` policy (`MAX_UNMAXIMIZED_WINDOW_AREA = 0.8`) maximizes every window larger than 80% of the work area. This was the real reason the window kept opening full-screen after the default size was reduced; the page scrolls through the outer scrolled window instead.
 
-- **Ctrl + mouse wheel zoom is app-side.** A capture-phase `EventControllerScroll` checks the Ctrl modifier, calls the same zoom path as the keyboard shortcuts, and restores the previous scroll offset after the chunked re-render. The OS only delivers the scroll event.
+- **Ctrl + mouse wheel zoom is app-side.** A capture-phase `EventControllerScroll` checks the Ctrl modifier and calls the same scale-only zoom path as the keyboard shortcuts. Wheel steps are coalesced and deferred ~40 ms; the OS only delivers the scroll event.
 
 - **Cairo renderer by default.** On the author’s X11/Mesa setup the default GTK GL renderer produced a transparent, unpainted client window. The GUI entry re-execs itself with `GSK_RENDERER=cairo` unless the user already set `GSK_RENDERER`; set `GSK_RENDERER=gl` to opt back into GL.
 
@@ -42,10 +45,9 @@ One line per non-obvious decision. The build specification is background; this f
 
 - **Side scrollbar.** The outer `ScrolledWindow` wraps the page area, so the vertical scrollbar lives in the dark gutter instead of over the white page.
 
-- **Zoom crash root cause and fix.** GTK aborted because `Ctrl`+wheel zoomed from inside the scroll event: the handler tore down the text buffer the event was still being dispatched against. Fixes:
-  - Wheel zoom is coalesced and deferred ~40 ms with `timeout_add_local_once`, so the buffer is never swapped during event dispatch.
-  - Each render builds a private buffer and attaches it only on the first idle tick; a render that is cancelled or whose buffer is no longer displayed stops instead of writing to the view.
-  - Each render produces its own `RenderOutput` and it replaces the published one only if the generation still matches, so stale `TextMark`s never reach the live document.
-  - Outline entries carry character offsets, not marks.
-  - The restored scroll offset is clamped to the new buffer, and the reading position is captured before re-rendering.
+- **Zoom no longer rebuilds the text buffer.** The older re-render zoom tore down the buffer that a scroll event was still being dispatched against and aborted GTK; the transform zoom removed that path. Wheel steps are still coalesced and deferred ~40 ms with `timeout_add_local_once`, and chunked rendering still:
+  - builds a private buffer and attaches it only on the first idle tick; a render that is cancelled or whose buffer is no longer displayed stops instead of writing to the view;
+  - produces its own `RenderOutput` and replaces the published one only if the generation still matches, so stale `TextMark`s never reach the live document;
+  - carries outline entries as character offsets, not marks.
   - Verified with 400 wheel-zoom events, 120 overlapping zoom spam events and combined outline/search/reload runs on three fixtures under `G_DEBUG=fatal-criticals`: zero criticals or crashes.
+- **Link hit-testing uses buffer coordinates.** `GtkTextView` event coordinates are widget coordinates; the hover and click handlers convert them with `window_to_buffer_coords` before calling `iter_at_location`. Without the conversion the hit point drifts by the page padding and at non-100% zoom.
